@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPExcep
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
-from app import auth as core_auth
+from app import auth as core_auth, llm
 from app.api.health import health_ready
 from app.schemas.projects import ProjectCreate
 from app.services import auth as auth_service, projects, documents, rag as rag_service
@@ -76,7 +76,7 @@ def create_project(request: Request, name: Annotated[str, Form(max_length=200)] 
 @router.get("/ui/projects/{project_id}")
 def project_page(request: Request, project_id: UUID, offset: int = Query(default=0, ge=0)):
     project = projects.get_project(project_id)
-    return render(request, "project_detail.html", project=project, active_project_id=project["id"], documents=documents.list_documents(project_id, 20, offset), offset=offset)
+    return render(request, "project_detail.html", project=project, active_project_id=project["id"], documents=documents.list_documents(project_id, 20, offset), offset=offset, rag_models=llm.available_models())
 
 @router.post("/ui/projects/{project_id}/documents")
 def upload(request: Request, project_id: UUID, file: Annotated[UploadFile, File()], tags: Annotated[str, Form(max_length=5000)] = "", authors: Annotated[str, Form(max_length=5000)] = "", custom_metadata: Annotated[str, Form(max_length=16000)] = "{}"):
@@ -84,13 +84,14 @@ def upload(request: Request, project_id: UUID, file: Annotated[UploadFile, File(
     return RedirectResponse(f"/ui/documents/{row['id']}", status_code=303)
 
 @router.post("/ui/projects/{project_id}/ask")
-def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = ""):
+def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = ""):
     project = projects.get_project(project_id)
-    result = rag_service.ask_project(project_id, question)
+    result = rag_service.ask_project(project_id, question, model or None)
     return render(
         request, "project_detail.html", project=project, active_project_id=project["id"],
-        documents=documents.list_documents(project_id, 20, 0), offset=0,
-        rag_question=question, rag_answer=result["answer"], rag_sources=result["sources"],
+        documents=documents.list_documents(project_id, 20, 0), offset=0, rag_models=llm.available_models(),
+        rag_question=question, rag_model_selected=model, rag_answer=result["answer"],
+        rag_answer_model=result["model"], rag_sources=result["sources"],
     )
 
 @router.get("/ui/documents/{document_id}")

@@ -49,6 +49,32 @@
     });
   }
 
+  // ----- user menu dropdown (topbar) -----
+  // CSS :focus-within already opens this without JS (click/Tab into the
+  // button or panel keeps focus inside .user-menu); JS just adds click-to-
+  // toggle and click-outside-to-close on top of that baseline.
+  var userMenuBtn = document.getElementById('user-menu-btn');
+  var userMenu = userMenuBtn && userMenuBtn.closest('.user-menu');
+  if (userMenu) {
+    var closeUserMenu = function () {
+      userMenu.classList.remove('open');
+      userMenuBtn.setAttribute('aria-expanded', 'false');
+      userMenuBtn.blur();
+    };
+    userMenuBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = !userMenu.classList.contains('open');
+      userMenu.classList.toggle('open', open);
+      userMenuBtn.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', function (e) {
+      if (!userMenu.contains(e.target)) closeUserMenu();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeUserMenu();
+    });
+  }
+
   // ----- live storage status in the sidebar (same endpoint Docker uses) -----
   var status = document.getElementById('store-status');
   if (status && window.fetch) {

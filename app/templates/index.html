@@ -42,10 +42,11 @@
       <p class="muted">Tạo dự án đầu tiên bằng biểu mẫu bên cạnh.</p>
     </div>
     {% endif %}
-    <div class="pager">
-      {% if offset > 0 %}<a href="/?offset={{ [0, offset-20]|max }}">← Trang trước</a>{% endif %}
-      {% if projects|length == 20 %}<a href="/?offset={{ offset+20 }}">Trang sau →</a>{% endif %}
-    </div>
+    <nav class="pager" aria-label="Phân trang dự án">
+      {% if offset > 0 %}<a class="pager-btn" href="/?offset={{ [0, offset-20]|max }}">{{ icon('arrow-left', 14) }}Trang trước</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 14) }}Trang trước</span>{% endif %}
+      <span class="pager-info">Trang {{ (offset // 20) + 1 }}{% if projects %} · {{ offset + 1 }}–{{ offset + projects|length }}{% endif %}</span>
+      {% if projects|length == 20 %}<a class="pager-btn" href="/?offset={{ offset+20 }}">Trang sau {{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled">Trang sau {{ icon('chevron-right', 14) }}</span>{% endif %}
+    </nav>
   </section>
 
   <section class="card" id="new-project">

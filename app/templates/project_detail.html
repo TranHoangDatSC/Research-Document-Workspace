@@ -80,29 +80,57 @@
     <p class="muted">Tải file đầu tiên lên ở khung phía trên.</p>
   </div>
   {% endif %}
-  <div class="pager">
-    {% if offset > 0 %}<a href="?offset={{ [0, offset-20]|max }}">← Trang trước</a>{% endif %}
-    {% if documents|length == 20 %}<a href="?offset={{ offset+20 }}">Trang sau →</a>{% endif %}
-  </div>
+  <nav class="pager" aria-label="Phân trang tài liệu">
+    {% if offset > 0 %}<a class="pager-btn" href="?offset={{ [0, offset-20]|max }}">{{ icon('arrow-left', 14) }}Trang trước</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 14) }}Trang trước</span>{% endif %}
+    <span class="pager-info">Trang {{ (offset // 20) + 1 }}{% if documents %} · {{ offset + 1 }}–{{ offset + documents|length }}{% endif %}</span>
+    {% if documents|length == 20 %}<a class="pager-btn" href="?offset={{ offset+20 }}">Trang sau {{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled">Trang sau {{ icon('chevron-right', 14) }}</span>{% endif %}
+  </nav>
 </section>
 
-<section class="card">
-  <div class="card-head"><h2>Hỏi đáp AI</h2></div>
-  <p class="muted small-text">Trả lời dựa trên văn bản đã trích xuất (tab "Văn bản trích xuất" ở từng tài liệu) — trích xuất tài liệu trước khi hỏi để có kết quả.</p>
-  <form method="post" action="/ui/projects/{{ project.id }}/ask" class="stack">
-    <label class="field">Câu hỏi
-      <textarea name="question" maxlength="2000" rows="3" placeholder="Ví dụ: Các tài liệu trong project này nói gì về giới hạn kích thước file?">{{ rag_question or '' }}</textarea>
-    </label>
-    <div><button class="btn primary">{{ icon('search', 16) }}Hỏi</button></div>
-  </form>
-  {% if rag_answer %}
-  <div class="rag-answer">
-    <p><strong>Trả lời</strong></p>
-    <p>{{ rag_answer }}</p>
-    {% if rag_sources %}
-    <p class="muted small-text">Nguồn: {% for s in rag_sources %}<span class="chip">{{ s.original_name }} #{{ s.chunk_index + 1 }}</span>{% endfor %}</p>
-    {% endif %}
+<section class="card notebook-card">
+  <div class="card-head">
+    <h2>{{ icon('layers', 18) }}Hỏi đáp AI</h2>
+    <span class="muted small-text">Dựa trên văn bản đã trích xuất</span>
+  </div>
+
+  {% if rag_question and rag_answer %}
+  <div class="chat-thread">
+    <div class="chat-bubble chat-user">
+      <span class="chat-avatar">{{ icon('user', 14) }}</span>
+      <div class="chat-bubble-body">{{ rag_question }}</div>
+    </div>
+    <div class="chat-bubble chat-ai">
+      <span class="chat-avatar ai">{{ icon('layers', 14) }}</span>
+      <div class="chat-bubble-body">
+        <p>{{ rag_answer }}</p>
+        {% if rag_sources %}
+        <div class="chat-sources">
+          {% for s in rag_sources %}<span class="chip">{{ icon('file', 12) }}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if rag_answer_model %}<p class="chat-model muted small-text">{{ icon('info', 12) }}Mô hình: {{ rag_answer_model }}</p>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty chat-empty">
+    <span class="empty-icon">{{ icon('layers', 26) }}</span>
+    <p><strong>Hỏi điều gì đó về tài liệu trong dự án này.</strong></p>
+    <p class="muted small-text">Trích xuất văn bản cho tài liệu trước (tab "Văn bản trích xuất") để có kết quả tốt hơn.</p>
   </div>
   {% endif %}
+
+  <form method="post" action="/ui/projects/{{ project.id }}/ask" class="chat-form">
+    <textarea name="question" maxlength="2000" rows="2" placeholder="Hỏi về nội dung tài liệu trong dự án…" required>{{ rag_question or '' }}</textarea>
+    <div class="chat-form-row">
+      {% if rag_models %}
+      <select name="model" class="model-select">
+        <option value="">Tự động chọn mô hình (xoay khi lỗi)</option>
+        {% for m in rag_models %}<option value="{{ m }}" {% if m == rag_model_selected %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+      {% endif %}
+      <button class="btn primary">{{ icon('search', 16) }}Hỏi</button>
+    </div>
+  </form>
 </section>
 {% endblock %}

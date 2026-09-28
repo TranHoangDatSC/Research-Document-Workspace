@@ -14,7 +14,7 @@ log = logging.getLogger("uvicorn.error")
 MAX_QUESTION_LENGTH = 2000
 
 
-def ask_project(project_id, question):
+def ask_project(project_id, question, model=None):
     documents_service.require_project(project_id)
 
     question = (question or "").strip()
@@ -53,14 +53,15 @@ def ask_project(project_id, question):
     prompt = rag.build_prompt(question, ranked)
 
     try:
-        answer = llm.ask(prompt)
+        answer, model_used = llm.ask(prompt, preferred_model=model or None)
     except llm.LLMError as exc:
         log.warning("rag_llm_failed error=%s", exc.message)
         raise HTTPException(503, exc.message) from None
 
-    log.info("project_asked project_id=%s chunks_used=%s", project_id, len(ranked))
+    log.info("project_asked project_id=%s chunks_used=%s model=%s", project_id, len(ranked), model_used)
     return {
         "answer": answer,
+        "model": model_used,
         "sources": [
             {"document_id": c["document_id"], "original_name": c["original_name"], "chunk_index": c["chunk_index"]}
             for c in ranked
