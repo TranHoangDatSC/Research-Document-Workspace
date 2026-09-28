@@ -62,7 +62,14 @@ Sửa code trong `app/` → thêm `--build` vào lệnh trên. Sửa `.env` → 
 
 Endpoint: `/docs` (Swagger), `/health/live`, `/health/ready`. Chi tiết API: [docs/api.md](docs/api.md).
 
-## 4. Sự cố thường gặp
+## 4. Triển khai lên VPS (tên miền + HTTPS)
+
+Hướng dẫn từng bước (thuê VPS, Ubuntu, firewall, Caddy, domain, HTTPS, đo tài
+nguyên, test từ mạng ngoài, chốt đồ án): [docs/day-06-huong-dan-trien-khai-vps.docx](docs/day-06-huong-dan-trien-khai-vps.docx).
+File cấu hình đã chuẩn bị sẵn, chỉ cần copy lên VPS: `Caddyfile`,
+`docker-compose.prod.yaml`, `.env.production.example`, `deploy/`.
+
+## 5. Sự cố thường gặp
 
 | Triệu chứng | Cách xử lý |
 | --- | --- |
@@ -72,7 +79,7 @@ Endpoint: `/docs` (Swagger), `/health/live`, `/health/ready`. Chi tiết API: [d
 | Web thoát ngay, log `initialization failed` | Sai mật khẩu so với volume cũ → khôi phục đúng giá trị `.env` cũ |
 | `Missing POSTGRES_DB` khi chạy compose | Chưa có `.env` hoặc thiếu biến → so với `.env.example` |
 
-## 5. Cấu trúc thư mục
+## 6. Cấu trúc thư mục
 
 ```
 app/
@@ -86,9 +93,12 @@ app/
   bootstrap.py       tạo + kiểm tra bảng/index/bucket (chạy khi web khởi động)
 tests/integration/   test tích hợp theo ngày (ngày 1–5)
 samples/             file mẫu dùng khi test
-docs/                api.md, architecture.md, testing.md
+docs/                api.md, architecture.md, testing.md, hướng dẫn triển khai VPS
 docs/evidence/       bằng chứng test đã lưu (lịch sử, không sửa)
-artifacts/           output test mới nhất (Git ignore)
+artifacts/            output test mới nhất (Git ignore)
+deploy/               script chạy trên VPS: firewall, đo tài nguyên, test từ mạng ngoài
+Caddyfile              cấu hình reverse proxy + HTTPS tự động (dùng ở VPS)
+docker-compose.prod.yaml   overlay thêm Caddy, dùng cùng docker-compose.yaml
 ```
 
 Tài liệu thêm: [Kiến trúc](docs/architecture.md) · [API](docs/api.md) · [Kiểm thử](docs/testing.md)

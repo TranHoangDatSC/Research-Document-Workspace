@@ -34,6 +34,21 @@ không có `models/`; schema DB nằm trong `bootstrap.py` (chưa có migration)
 3. Healthcheck của `web` gọi `/health/ready`: chỉ `healthy` khi cả 3 storage
    phản hồi và đủ bảng/index/bucket.
 
+## Triển khai production (VPS)
+
+```
+Internet ──HTTPS──> Caddy (80/443, container)
+                       │ reverse_proxy web:8000 (network nội bộ Compose)
+                       ▼
+                      web (:8000, chỉ publish 127.0.0.1:8001 để debug qua SSH tunnel)
+                       ├── PostgreSQL, MongoDB, MinIO (giữ nguyên 127.0.0.1, không đổi)
+```
+
+Caddy là service duy nhất thêm vào, qua overlay `docker-compose.prod.yaml`
+(không sửa `docker-compose.yaml`). Caddy tự xin và gia hạn chứng chỉ Let's
+Encrypt cho domain trong biến `DOMAIN`; không cần cấu hình TLS thủ công. Chi
+tiết từng bước: [day-06-huong-dan-trien-khai-vps.docx](day-06-huong-dan-trien-khai-vps.docx).
+
 ## Giới hạn đã biết
 
 - Upload ghi 3 storage **không** phải transaction phân tán; xem [api.md](api.md#ghi-và-lỗi-giữa-chừng).

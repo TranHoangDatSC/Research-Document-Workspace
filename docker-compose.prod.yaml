@@ -1,0 +1,36 @@
+# Overlay for VPS deployment: use together with docker-compose.yaml, never alone.
+#   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build --wait
+#
+# Adds Caddy as a reverse proxy with automatic HTTPS (Let's Encrypt). Every other
+# service is unchanged: postgres/mongo/minio/web keep their existing 127.0.0.1
+# port bindings, so only Caddy is reachable from outside the VPS. Caddy reaches
+# "web" over the Compose network by service name, not through the published
+# 127.0.0.1:8001 port.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    cpus: "0.5"
+    mem_limit: 256m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:
