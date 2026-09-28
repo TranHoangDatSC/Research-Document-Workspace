@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Quản lý người dùng · Research Document Workspace{% endblock %}
+{% block crumbs %}<span class="crumb-current">Quản lý người dùng</span>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Quản trị</p>
+  <h1>Quản lý người dùng</h1>
+  <p class="muted lead">Hai role hiện có: <code>user</code> và <code>admin</code>.</p>
+</div>
+
+<div class="split">
+  <section class="card">
+    <div class="card-head"><h2>Tài khoản ({{ users|length }})</h2></div>
+    <div class="table-wrap">
+      <table class="doc-table">
+        <thead><tr><th>Username</th><th>Role</th><th>Trạng thái</th><th>Tạo lúc</th><th class="right">Thao tác</th></tr></thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>{{ u.username }}</td>
+            <td>
+              {% if u.id|string == current_user.user_id %}
+              <span class="badge">{{ u.role }}</span>
+              {% else %}
+              <form method="post" action="/admin/users/{{ u.id }}/role">
+                <select name="role" class="role-select" onchange="this.form.submit()">
+                  <option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option>
+                  <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+                </select>
+              </form>
+              {% endif %}
+            </td>
+            <td><span class="badge {{ 'ready' if u.is_active else 'failed' }}">{{ 'active' if u.is_active else 'khóa' }}</span></td>
+            <td class="muted small-text">{{ u.created_at|dt }}</td>
+            <td class="right">
+              {% if u.id|string == current_user.user_id %}
+              <span class="muted small-text">(bạn)</span>
+              {% else %}
+              <form method="post" action="/admin/users/{{ u.id }}/active" class="row-actions">
+                <input type="hidden" name="is_active" value="{{ 'false' if u.is_active else 'true' }}">
+                <button class="btn ghost sm">{{ 'Khóa' if u.is_active else 'Mở khóa' }}</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Tạo tài khoản mới</h2></div>
+    <form method="post" action="/admin/users" class="stack">
+      <label class="field">Username
+        <input name="username" required maxlength="50" pattern="[a-zA-Z0-9_.\-]{3,50}" title="3-50 ký tự: chữ, số, . _ -" placeholder="vd: nguyen.van.a">
+      </label>
+      <label class="field">Mật khẩu
+        <input type="password" name="password" required minlength="8" maxlength="200">
+      </label>
+      <label class="field">Role
+        <select name="role">
+          <option value="user" selected>user</option>
+          <option value="admin">admin</option>
+        </select>
+      </label>
+      <button class="btn primary">{{ icon('plus', 16) }}Tạo tài khoản</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

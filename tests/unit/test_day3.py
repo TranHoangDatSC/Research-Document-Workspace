@@ -4,11 +4,14 @@ Requires app dependencies plus httpx. Storage doubles, no Docker needed.
 from datetime import datetime, timezone
 import hashlib
 import io
+import os
 import unittest
 from unittest.mock import patch
 from uuid import UUID, uuid4
 import psycopg
 from fastapi.testclient import TestClient
+os.environ.setdefault("SESSION_SECRET", "test-secret-not-for-production")
+from app import auth as core_auth
 from app.main import app
 from app.services import documents as service
 from app.repositories import documents as docs, projects
@@ -69,6 +72,9 @@ class Cases(unittest.TestCase):
         for p in patches: p.start(); self.addCleanup(p.stop)
         self.client=TestClient(app)
         self.addCleanup(self.client.close)
+        # This class tests document/project flows, not auth — log in once as
+        # a fixed admin session so every request below is already authenticated.
+        self.client.cookies.set(core_auth.SESSION_COOKIE, core_auth.create_session_token(uuid4(), 'tester', 'admin'))
         r=self.client.post('/projects',json={'name':'Cloud project'})
         self.assertEqual(r.status_code,201)
         self.pid=r.json()['id']

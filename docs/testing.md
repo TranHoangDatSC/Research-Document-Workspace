@@ -3,6 +3,13 @@
 Chạy ở thư mục gốc, stack đang `healthy`. Test ngày 2 chạy trên Windows bằng
 Python ≥ 3.11 (chỉ thư viện chuẩn), gọi `127.0.0.1:8001` và `docker compose exec`.
 
+Từ Ngày 6, mọi route (trừ `/health/*`) yêu cầu đăng nhập. Các test tích hợp
+gọi HTTP thật (`day2_test.py`, `day3_test.py`, `day5_test.py`) tự đăng nhập
+bằng `ADMIN_USERNAME`/`ADMIN_PASSWORD` đọc từ `.env`
+(`tests/integration/_auth_helper.py`) trước khi chạy phần còn lại — cần
+`.env` có 2 biến này khớp với tài khoản admin đã seed. Không cần sửa gì thêm
+khi chạy các lệnh dưới đây như cũ.
+
 Mỗi phase ghi kết quả vào `artifacts/day-02/day-02-<phase>-result.txt`, trả exit code
 khác 0 khi FAIL. `artifacts/day-02/day-02-state.json` lưu ID project/tài liệu và SHA-256
 (không có mật khẩu) — **đừng xoá**, phase `after`/`failure`/`recovery` cần nó.

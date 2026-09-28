@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from uuid import uuid4
 
+from _auth_helper import build_cookie_opener, login
+
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'artifacts' / 'day-02'
 STATE = OUTPUT / 'day-02-state.json'
@@ -182,7 +184,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     report = OUTPUT / f'day-02-{args.phase}-result.txt'
+    urllib.request.install_opener(build_cookie_opener())
     try:
+        login(BASE)
+        require(True, 'Admin login')
         if args.phase == 'before':
             before()
         else:

@@ -85,4 +85,24 @@
     {% if documents|length == 20 %}<a href="?offset={{ offset+20 }}">Trang sau →</a>{% endif %}
   </div>
 </section>
+
+<section class="card">
+  <div class="card-head"><h2>Hỏi đáp AI</h2></div>
+  <p class="muted small-text">Trả lời dựa trên văn bản đã trích xuất (tab "Văn bản trích xuất" ở từng tài liệu) — trích xuất tài liệu trước khi hỏi để có kết quả.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/ask" class="stack">
+    <label class="field">Câu hỏi
+      <textarea name="question" maxlength="2000" rows="3" placeholder="Ví dụ: Các tài liệu trong project này nói gì về giới hạn kích thước file?">{{ rag_question or '' }}</textarea>
+    </label>
+    <div><button class="btn primary">{{ icon('search', 16) }}Hỏi</button></div>
+  </form>
+  {% if rag_answer %}
+  <div class="rag-answer">
+    <p><strong>Trả lời</strong></p>
+    <p>{{ rag_answer }}</p>
+    {% if rag_sources %}
+    <p class="muted small-text">Nguồn: {% for s in rag_sources %}<span class="chip">{{ s.original_name }} #{{ s.chunk_index + 1 }}</span>{% endfor %}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
 {% endblock %}

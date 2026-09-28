@@ -14,6 +14,8 @@ import urllib.error
 import urllib.request
 from uuid import uuid4
 
+from _auth_helper import build_cookie_opener, login
+
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = ROOT / 'samples'
 OUTPUT = ROOT / 'artifacts' / 'day-05'
@@ -171,7 +173,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     report = OUTPUT / f'day-05-{args.phase}-result.txt'
+    urllib.request.install_opener(build_cookie_opener())
     try:
+        login(BASE)
+        require(True, 'Admin login')
         check()
         results.append('DAY 5 ' + args.phase.upper() + ': PASS')
         print(results[-1])

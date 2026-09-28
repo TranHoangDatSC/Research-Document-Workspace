@@ -1,16 +1,26 @@
 """Run from a machine OUTSIDE the VPS (home Wi-Fi, phone on 4G, a friend's
 laptop) after DNS and HTTPS are live. Standard library only: no Docker or SSH
-access needed on the machine running this script.
+access needed on the machine running this script. Needs an account on the
+target app (Day 6 auth) — pass --username or rely on the ADMIN_USERNAME env
+var, and enter the password at the prompt (never as a CLI argument, so it
+does not end up in shell history).
 
 Usage:
-    python deploy/external-smoke-test.py https://your-domain.example.com
+    python deploy/external-smoke-test.py https://your-domain.example.com --username admin
 """
 import argparse
+import getpass
 import hashlib
+import http.cookiejar
 import json
-from uuid import uuid4
+import os
 import urllib.error
+import urllib.parse
 import urllib.request
+from uuid import uuid4
+
+COOKIE_JAR = http.cookiejar.CookieJar()
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(COOKIE_JAR))
 
 
 def request(base, path, method="GET", data=None, content_type=None):
@@ -19,10 +29,16 @@ def request(base, path, method="GET", data=None, content_type=None):
     try:
         # A successful HTTPS response here already proves a valid, trusted
         # certificate chain: urllib rejects self-signed/expired certs by default.
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with OPENER.open(req, timeout=20) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
+
+
+def login(base, username, password):
+    data = urllib.parse.urlencode({"username": username, "password": password}).encode()
+    status, body = request(base, "/login", "POST", data, "application/x-www-form-urlencoded")
+    assert status in (200, 303), f"login failed: {status} {body[:200]!r}"
 
 
 def upload(base, project_id, name, payload):
@@ -42,15 +58,22 @@ def upload(base, project_id, name, payload):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("base_url", help="e.g. https://your-domain.example.com")
+    parser.add_argument("--username", default=os.environ.get("ADMIN_USERNAME"))
     args = parser.parse_args()
     base = args.base_url.rstrip("/")
     if not base.startswith("https://"):
         raise SystemExit("Use an https:// URL — this must prove the public TLS path, not localhost.")
+    if not args.username:
+        raise SystemExit("Pass --username, or set ADMIN_USERNAME in the environment.")
+    password = os.environ.get("ADMIN_PASSWORD") or getpass.getpass(f"Password for {args.username}: ")
 
     status, body = request(base, "/health/ready")
     assert status == 200 and json.loads(body)["status"] == "ready", \
         f"/health/ready failed: {status} {body[:200]!r}"
     print("HTTPS + readiness: PASS")
+
+    login(base, args.username, password)
+    print("Login over public HTTPS: PASS")
 
     status, body = request(
         base, "/projects", "POST",

@@ -8,9 +8,10 @@ from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPExcep
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
+from app import auth as core_auth
 from app.api.health import health_ready
 from app.schemas.projects import ProjectCreate
-from app.services import projects, documents
+from app.services import auth as auth_service, projects, documents, rag as rag_service
 from app.ui.icons import icon, filesize, fmt_datetime, pretty_json
 
 router = APIRouter(include_in_schema=False)
@@ -32,10 +33,31 @@ def sidebar_projects():
 
 def render(request, name, status_code=200, **context):
     context.setdefault("sidebar_projects", sidebar_projects())
+    context.setdefault("current_user", getattr(request.state, "user", None))
     return templates.TemplateResponse(request=request, name=name, context=context, status_code=status_code)
 
 def error_page(request, status, message):
     return render(request, "error.html", status, status=status, message=message)
+
+@router.get("/login")
+def login_page(request: Request):
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": ""})
+
+@router.post("/login")
+def login(request: Request, username: Annotated[str, Form(max_length=50)] = "", password: Annotated[str, Form(max_length=200)] = ""):
+    user = auth_service.authenticate(username.strip(), password)
+    if user is None:
+        return templates.TemplateResponse(request=request, name="login.html", status_code=401, context={"error": "Sai username hoặc mật khẩu, hoặc tài khoản đã bị khóa."})
+    token = core_auth.create_session_token(user["id"], user["username"], user["role"])
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(core_auth.SESSION_COOKIE, token, max_age=core_auth.SESSION_MAX_AGE_SECONDS, httponly=True, samesite="lax")
+    return response
+
+@router.post("/logout")
+def logout(request: Request):
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(core_auth.SESSION_COOKIE)
+    return response
 
 @router.get("/")
 def home(request: Request, offset: int = Query(default=0, ge=0)):
@@ -60,6 +82,16 @@ def project_page(request: Request, project_id: UUID, offset: int = Query(default
 def upload(request: Request, project_id: UUID, file: Annotated[UploadFile, File()], tags: Annotated[str, Form(max_length=5000)] = "", authors: Annotated[str, Form(max_length=5000)] = "", custom_metadata: Annotated[str, Form(max_length=16000)] = "{}"):
     row = documents.upload_document(project_id, file, tags, authors, custom_metadata)
     return RedirectResponse(f"/ui/documents/{row['id']}", status_code=303)
+
+@router.post("/ui/projects/{project_id}/ask")
+def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = ""):
+    project = projects.get_project(project_id)
+    result = rag_service.ask_project(project_id, question)
+    return render(
+        request, "project_detail.html", project=project, active_project_id=project["id"],
+        documents=documents.list_documents(project_id, 20, 0), offset=0,
+        rag_question=question, rag_answer=result["answer"], rag_sources=result["sources"],
+    )
 
 @router.get("/ui/documents/{document_id}")
 def document_page(request: Request, document_id: UUID):

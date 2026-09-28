@@ -9,6 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from uuid import uuid4
+from _auth_helper import build_cookie_opener, login
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'artifacts' / 'day-03'
 STATE = OUTPUT / 'state.json'
@@ -17,7 +18,7 @@ RESULTS = []
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
-OPENER = urllib.request.build_opener(NoRedirect)
+OPENER = build_cookie_opener(NoRedirect)
 def check(value, label):
     if not value:
         raise RuntimeError(label)
@@ -151,6 +152,8 @@ if __name__ == '__main__':
     OUTPUT.mkdir(parents=True, exist_ok=True)
     code = 0
     try:
+        login(BASE, opener=OPENER)
+        check(True, 'Admin login')
         globals()[args.phase]()
         RESULTS.append('DAY 3 ' + args.phase.upper() + ': PASS')
     except Exception as exc:

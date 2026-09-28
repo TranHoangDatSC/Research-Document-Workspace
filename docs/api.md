@@ -2,6 +2,18 @@
 
 Swagger đầy đủ: http://127.0.0.1:8001/docs
 
+## Đăng nhập (Ngày 6)
+
+Toàn bộ endpoint dưới đây **yêu cầu đăng nhập**, trừ `/health/live`,
+`/health/ready`, `/login`. Đăng nhập bằng `POST /login` (form
+`application/x-www-form-urlencoded`, trường `username`/`password`) — thành
+công trả cookie session (`rdw_session`, ký HMAC, không lưu ở server); các
+request sau gửi kèm cookie này. Thiếu/sai cookie: route `/ui/*` redirect
+`/login`, route JSON API trả `401`. Gọi API bằng script cần đăng nhập trước
+và giữ cookie qua các request tiếp theo (ví dụ `http.cookiejar` trong Python —
+xem `tests/integration/_auth_helper.py`). Chi tiết tài khoản/role:
+[ke-hoach-nang-cap.md](ke-hoach-nang-cap.md#5-đăng-nhập--đã-triển-khai-đảo-quyết-định-so-với-bản-đầu).
+
 ## Endpoint
 
 | Method | Path | Kết quả |
@@ -16,6 +28,7 @@ Swagger đầy đủ: http://127.0.0.1:8001/docs
 | GET | `/documents/{document_id}` | Metadata PostgreSQL + MongoDB (chỉ tài liệu `ready`) |
 | GET | `/documents/{document_id}/download` | Tải file gốc |
 | POST | `/documents/{document_id}/extract` | Trích xuất văn bản, lưu vào MongoDB, trả metadata đầy đủ |
+| POST | `/projects/{project_id}/ask` | Hỏi đáp AI trên văn bản đã trích xuất trong project (`{"question"}`) |
 
 Upload multipart: `file` (bắt buộc), `tags`, `authors` (phân cách bằng dấu phẩy),
 `custom_metadata` (chuỗi JSON object, mặc định `{}`).
@@ -67,6 +80,24 @@ vượt quá thì `truncated: true` và chỉ phần đã lưu được tính v�
 Chỉ kiểm tra đuôi file ở bước upload, không quét nội dung, nên một `.pdf`/`.docx`
 hỏng vẫn upload thành công (201) — lỗi chỉ xuất hiện khi gọi `extract`.
 Tài liệu chưa từng trích xuất có `extracted_text: null`.
+
+## Hỏi đáp AI (RAG thu nhỏ)
+
+`POST /projects/{project_id}/ask` tìm các đoạn văn bản liên quan nhất (theo
+số từ khóa trùng, không dùng embedding/vector DB — xem `app/rag.py`) trong
+`extracted_text` của các tài liệu `ready` thuộc project, rồi gửi câu hỏi kèm
+các đoạn đó cho một LLM (`app/llm.py`, Gemini hoặc OpenAI qua `LLM_PROVIDER`
+trong `.env`). Trả về `{"answer", "sources": [{"document_id", "original_name",
+"chunk_index"}]}`.
+
+| Trường hợp | Mã |
+| --- | --- |
+| Project không tồn tại | 404 |
+| Câu hỏi rỗng hoặc > 2000 ký tự | 422 |
+| Chưa có tài liệu nào trong project được trích xuất văn bản | 409 |
+| `LLM_PROVIDER`/`LLM_API_KEY` chưa cấu hình, hoặc lời gọi LLM thất bại | 503 |
+
+Không lưu lịch sử hỏi đáp — mỗi lần hỏi tính độc lập, không có bộ nhớ hội thoại.
 
 ## Ghi và lỗi giữa chừng
 

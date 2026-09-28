@@ -48,6 +48,10 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .canvas { flex: 1; min-width: 0; overflow: auto; padding: 32px clamp(20px, 4vw, 48px) 56px; }
 .canvas > * { max-width: 1040px; margin-left: auto; margin-right: auto; }
 
+/* ---------- standalone login page (no sidebar shell) ---------- */
+.login-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.login-shell .card { width: 100%; margin-top: 0; }
+
 /* ---------- sidebar ---------- */
 .sidebar { display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--surface); border-right: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 14px; text-decoration: none; color: var(--text); }
@@ -79,6 +83,8 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .side-foot { padding: 10px 12px 14px; border-top: 1px solid var(--border); }
 .side-link { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 13px; }
 .side-link:hover { background: var(--surface-2); color: var(--text); }
+button.side-link { width: 100%; border: 0; background: none; font: inherit; cursor: pointer; }
+.side-user { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
 
 /* ---------- topbar ---------- */
 .topbar { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border); flex: none; }
@@ -112,6 +118,8 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .warn-icon { display: inline-grid; place-items: center; width: 52px; height: 52px; margin-bottom: 12px; border-radius: 50%; background: var(--danger-soft); color: var(--danger); }
 .file-pill { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px; border-radius: 8px; background: var(--bg); overflow-wrap: anywhere; }
 .notice { padding: 10px 14px; border-radius: 8px; background: var(--danger-soft); color: #7b2c20; font-size: 14px; }
+.rag-answer { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.rag-answer p:last-child { margin-bottom: 0; }
 .pager { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 14px; }
 .pager:empty { display: none; }
 .empty { display: grid; justify-items: center; padding: 28px 12px; text-align: center; }
@@ -129,8 +137,9 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .stack { display: grid; gap: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .field { display: block; font-size: 13.5px; font-weight: 600; }
-input, textarea { display: block; width: 100%; margin-top: 6px; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: #fff; color: var(--text); font: inherit; font-weight: 400; }
+input, textarea, select { display: block; width: 100%; margin-top: 6px; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: #fff; color: var(--text); font: inherit; font-weight: 400; }
 textarea { resize: vertical; }
+.role-select { width: auto; margin-top: 0; padding: 5px 8px; font-size: 13px; }
 input:focus, textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--focus); }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 16px; border: 1px solid transparent; border-radius: 8px; font: inherit; font-weight: 600; font-size: 14px; line-height: 1.3; cursor: pointer; text-decoration: none; white-space: nowrap; }
 .btn.primary { background: var(--accent); color: #fff; }

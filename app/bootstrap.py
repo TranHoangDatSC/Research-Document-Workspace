@@ -1,6 +1,8 @@
 import os
 import time
+from uuid import uuid4
 
+from app import auth
 from app.storage import postgres_connection, mongo_client, minio_client
 
 
@@ -44,6 +46,20 @@ def initialize_postgres():
             CHECK (status IN ('pending', 'ready', 'failed', 'deleting'))
         """)
 
+        # Day 6: admin-managed accounts. `role` is a plain CHECK constraint,
+        # additive like the migration above, so a future role only needs the
+        # same kind of DROP/ADD here.
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id UUID PRIMARY KEY,
+                username VARCHAR(50) NOT NULL UNIQUE CHECK (length(trim(username)) > 0),
+                password_hash TEXT NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+                is_active BOOLEAN NOT NULL DEFAULT true,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
 
 def initialize_mongodb():
     with mongo_client() as client:
@@ -67,6 +83,9 @@ def check_postgres():
                    content_type, size_bytes, status, created_at
             FROM documents LIMIT 0
         """)
+        connection.execute(
+            "SELECT id, username, role, is_active, created_at FROM users LIMIT 0"
+        )
 
 
 def check_mongodb():
@@ -87,6 +106,31 @@ def check_mongodb():
 def check_minio():
     if not minio_client().bucket_exists(bucket_name()):
         raise RuntimeError("Missing document bucket")
+
+
+def seed_admin_user():
+    """Best-effort, idempotent: create the first admin from env vars if none
+    exists yet. Never overwrites an existing account with the same username.
+    Skipped (not fatal) when ADMIN_USERNAME/ADMIN_PASSWORD are unset, so
+    existing .env files without them still boot.
+    """
+    username = os.environ.get("ADMIN_USERNAME")
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not username or not password:
+        print("Admin seed: skipped (ADMIN_USERNAME/ADMIN_PASSWORD not set)", flush=True)
+        return
+    with postgres_connection() as connection:
+        exists = connection.execute(
+            "SELECT 1 FROM users WHERE username = %s", (username,)
+        ).fetchone()
+        if exists:
+            print(f"Admin seed: '{username}' already exists, skipped", flush=True)
+            return
+        connection.execute(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (%s, %s, %s, 'admin')",
+            (uuid4(), username, auth.hash_password(password)),
+        )
+    print(f"Admin seed: created admin '{username}'", flush=True)
 
 
 def initialize_with_retry(name, initialize, check):
@@ -111,6 +155,7 @@ if __name__ == "__main__":
     initialize_with_retry(
         "PostgreSQL", initialize_postgres, check_postgres
     )
+    seed_admin_user()
     initialize_with_retry(
         "MongoDB", initialize_mongodb, check_mongodb
     )

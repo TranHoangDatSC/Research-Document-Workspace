@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Đăng nhập · Research Document Workspace</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+<div class="login-shell">
+  <section class="card narrow center-card">
+    <h1>Research Document Workspace</h1>
+    <p class="muted">Đăng nhập để tiếp tục.</p>
+    {% if error %}<p class="notice">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" class="stack">
+      <label class="field">Username
+        <input name="username" required maxlength="50" autocomplete="username" autofocus>
+      </label>
+      <label class="field">Mật khẩu
+        <input type="password" name="password" required maxlength="200" autocomplete="current-password">
+      </label>
+      <button class="btn primary">Đăng nhập</button>
+    </form>
+  </section>
+</div>
+</body>
+</html>

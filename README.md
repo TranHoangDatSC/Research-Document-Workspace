@@ -83,15 +83,18 @@ File cấu hình đã chuẩn bị sẵn, chỉ cần copy lên VPS: `Caddyfile`
 
 ```
 app/
-  main.py            tạo FastAPI, gắn router
-  api/               route HTTP: health, projects, documents
+  main.py            tạo FastAPI, gắn router, middleware đăng nhập
+  api/               route HTTP: health, projects, documents, rag
   schemas/           Pydantic model request/response
-  services/          điều phối upload/download/trích xuất giữa 3 storage
+  services/          điều phối upload/download/trích xuất/hỏi đáp giữa storage
   repositories/      SQL PostgreSQL + truy vấn MongoDB
   extractors.py      trích xuất văn bản .txt/.pdf/.docx (hàm thuần, không I/O)
+  rag.py             chọn đoạn văn bản liên quan (từ khóa, không embedding)
+  llm.py             gọi Gemini/OpenAI qua urllib (hàm thuần I/O, không SDK)
+  auth.py            băm mật khẩu + ký/xác minh cookie session (hàm thuần)
   storage.py         tạo kết nối PostgreSQL/MongoDB/MinIO
-  bootstrap.py       tạo + kiểm tra bảng/index/bucket (chạy khi web khởi động)
-tests/integration/   test tích hợp theo ngày (ngày 1–5)
+  bootstrap.py       tạo + kiểm tra bảng/index/bucket, seed admin đầu tiên
+tests/integration/   test tích hợp theo ngày (ngày 1–6)
 samples/             file mẫu dùng khi test
 docs/                api.md, architecture.md, testing.md, hướng dẫn triển khai VPS
 docs/evidence/       bằng chứng test đã lưu (lịch sử, không sửa)

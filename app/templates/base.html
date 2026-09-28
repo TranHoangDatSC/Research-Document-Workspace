@@ -43,6 +43,11 @@
     </section>
 
     <div class="side-foot">
+      {% if current_user %}
+      <p class="side-user muted small-text">{{ icon('user', 13) }}<span>{{ current_user.username }}</span><span class="badge">{{ current_user.role }}</span></p>
+      {% if current_user.role == 'admin' %}<a href="/admin/users" class="side-link">{{ icon('layers', 14) }}<span>Quản lý người dùng</span></a>{% endif %}
+      <form method="post" action="/logout"><button type="submit" class="side-link">{{ icon('arrow-left', 14) }}<span>Đăng xuất</span></button></form>
+      {% endif %}
       <a href="/docs" class="side-link">{{ icon('book', 14) }}<span>API Docs</span></a>
     </div>
   </aside>
