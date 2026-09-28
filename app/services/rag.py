@@ -14,7 +14,7 @@ log = logging.getLogger("uvicorn.error")
 MAX_QUESTION_LENGTH = 2000
 
 
-def ask_project(project_id, question, model=None):
+def ask_project(project_id, question, model=None, document_ids=None):
     documents_service.require_project(project_id)
 
     question = (question or "").strip()
@@ -23,11 +23,19 @@ def ask_project(project_id, question, model=None):
     if len(question) > MAX_QUESTION_LENGTH:
         raise HTTPException(422, f"Câu hỏi tối đa {MAX_QUESTION_LENGTH} ký tự")
 
+    # None = no filter (use every ready document); an explicit, possibly
+    # empty, list scopes the answer to just the checked sources.
+    selected = {str(d) for d in document_ids} if document_ids is not None else None
+    if selected is not None and not selected:
+        raise HTTPException(422, "Chọn ít nhất một tài liệu để hỏi.")
+
     try:
         rows = repository.list_documents(project_id, 200, 0)
         documents = []
         for row in rows:
             if row["status"] != "ready":
+                continue
+            if selected is not None and str(row["id"]) not in selected:
                 continue
             details = repository.get_details(row["id"])
             if details is None:

@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ project.name }} · Research Document Workspace{% endblock %}
 {% block crumbs %}<a href="/">Dự án</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">{{ project.name }}</span>{% endblock %}
+
+{% block sources %}
+{% include "_sources_panel.html" %}
+{% endblock %}
+
 {% block content %}
 <div class="page-head">
   <p class="eyebrow">Dự án</p>
@@ -14,86 +19,9 @@
   <div class="stat-card"><span class="stat-icon">{{ icon('clock', 18) }}</span><div><strong>{{ project.created_at|dt }}</strong><small>ngày tạo dự án</small></div></div>
 </section>
 
-<section class="card">
-  <div class="card-head"><h2>Thêm tài liệu</h2><span class="muted small-text">.txt · .pdf · .docx · tối đa 10 MiB</span></div>
-  <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="stack">
-    <label class="dropzone" id="dropzone">
-      <input name="file" type="file" required accept=".txt,.pdf,.docx" id="file-input">
-      <span class="dropzone-icon">{{ icon('upload', 24) }}</span>
-      <span class="dropzone-text"><strong id="file-label">Chọn file hoặc kéo thả vào đây</strong><small id="file-hint">File (.txt, .pdf, .docx · tối đa 10 MiB)</small></span>
-    </label>
-    <div class="form-grid">
-      <label class="field">Tags, cách nhau bởi dấu phẩy
-        <input name="tags" maxlength="5000" placeholder="cloud,docker">
-      </label>
-      <label class="field">Tác giả, cách nhau bởi dấu phẩy
-        <input name="authors" maxlength="5000">
-      </label>
-    </div>
-    <label class="field">Metadata bổ sung (JSON object)
-      <textarea name="custom_metadata" maxlength="16000" rows="2" class="mono" spellcheck="false">{}</textarea>
-    </label>
-    <div><button class="btn primary">{{ icon('upload', 16) }}Tải tài liệu lên</button></div>
-  </form>
-</section>
-
-<section class="card">
-  <div class="card-head"><h2>Tài liệu</h2></div>
-  {% if documents %}
-  <div class="table-wrap">
-    <table class="doc-table">
-      <thead><tr><th>Tên file</th><th>Kích thước</th><th>Trạng thái</th><th class="right">Thao tác</th></tr></thead>
-      <tbody>
-        {% for doc in documents %}
-        <tr>
-          <td>
-            <div class="file-cell">
-              <span class="file-icon">{{ icon('file', 18) }}</span>
-              <div>
-                {% if doc.status == 'ready' %}<a class="file-name" href="/ui/documents/{{ doc.id }}">{{ doc.original_name }}</a>{% else %}<span class="file-name">{{ doc.original_name }}</span>{% endif %}
-                <small>{{ doc.created_at|dt }}</small>
-              </div>
-            </div>
-          </td>
-          <td class="nowrap">{{ doc.size_bytes|filesize }}</td>
-          <td><span class="badge {{ doc.status }}">{{ doc.status }}</span></td>
-          <td class="right">
-            <div class="row-actions">
-              {% if doc.status == 'ready' %}
-              <a class="btn ghost sm" href="/ui/documents/{{ doc.id }}">Chi tiết</a>
-              <a class="btn ghost sm" href="/documents/{{ doc.id }}/download">{{ icon('download', 14) }}Tải về</a>
-              {% endif %}
-              {% if doc.status != 'pending' %}
-              <a class="btn ghost sm danger-text" href="/ui/documents/{{ doc.id }}/delete">{% if doc.status == 'deleting' %}{{ icon('refresh', 14) }}Thử xóa lại{% else %}{{ icon('trash', 14) }}Xóa{% endif %}</a>
-              {% endif %}
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="empty">
-    <span class="empty-icon">{{ icon('file', 28) }}</span>
-    <p><strong>Chưa có tài liệu.</strong></p>
-    <p class="muted">Tải file đầu tiên lên ở khung phía trên.</p>
-  </div>
-  {% endif %}
-  <nav class="pager" aria-label="Phân trang tài liệu">
-    {% if offset > 0 %}<a class="pager-btn" href="?offset={{ [0, offset-20]|max }}">{{ icon('arrow-left', 14) }}Trang trước</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 14) }}Trang trước</span>{% endif %}
-    <span class="pager-info">Trang {{ (offset // 20) + 1 }}{% if documents %} · {{ offset + 1 }}–{{ offset + documents|length }}{% endif %}</span>
-    {% if documents|length == 20 %}<a class="pager-btn" href="?offset={{ offset+20 }}">Trang sau {{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled">Trang sau {{ icon('chevron-right', 14) }}</span>{% endif %}
-  </nav>
-</section>
-
-<section class="card notebook-card">
-  <div class="card-head">
-    <h2>{{ icon('layers', 18) }}Hỏi đáp AI</h2>
-    <span class="muted small-text">Dựa trên văn bản đã trích xuất</span>
-  </div>
-
-  {% if rag_question and rag_answer %}
+{% if rag_question and rag_answer %}
+<section class="card" id="last-answer">
+  <div class="card-head"><h2>{{ icon('message-circle', 18) }}Câu trả lời gần nhất</h2></div>
   <div class="chat-thread">
     <div class="chat-bubble chat-user">
       <span class="chat-avatar">{{ icon('user', 14) }}</span>
@@ -112,25 +40,70 @@
       </div>
     </div>
   </div>
-  {% else %}
-  <div class="empty chat-empty">
-    <span class="empty-icon">{{ icon('layers', 26) }}</span>
-    <p><strong>Hỏi điều gì đó về tài liệu trong dự án này.</strong></p>
-    <p class="muted small-text">Trích xuất văn bản cho tài liệu trước (tab "Văn bản trích xuất") để có kết quả tốt hơn.</p>
-  </div>
-  {% endif %}
+</section>
+{% else %}
+<section class="card research-hint">
+  <span class="empty-icon">{{ icon('folder', 26) }}</span>
+  <p><strong>Chọn một tài liệu ở khung bên trái để xem chi tiết</strong></p>
+  <p class="muted small-text">Hoặc bấm nút trò chuyện AI ở góc dưới bên phải để hỏi đáp trên các tài liệu đã trích xuất trong dự án này.</p>
+</section>
+{% endif %}
+{% endblock %}
 
-  <form method="post" action="/ui/projects/{{ project.id }}/ask" class="chat-form">
-    <textarea name="question" maxlength="2000" rows="2" placeholder="Hỏi về nội dung tài liệu trong dự án…" required>{{ rag_question or '' }}</textarea>
-    <div class="chat-form-row">
-      {% if rag_models %}
+{% block ai_chat %}
+<template id="ai-user-avatar-tpl">{{ icon('user', 14) }}</template>
+<template id="ai-ai-avatar-tpl">{{ icon('sparkles', 14) }}</template>
+<button type="button" class="ai-fab" id="ai-fab" hidden aria-controls="ai-panel" aria-expanded="false" title="Hỏi đáp AI">
+  {{ icon('sparkles', 24) }}
+</button>
+<div class="ai-scrim" id="ai-scrim" hidden></div>
+<aside class="ai-panel" id="ai-panel" aria-label="Hỏi đáp AI">
+  <div class="ai-panel-head">
+    <h2>{{ icon('sparkles', 16) }}Hỏi đáp AI</h2>
+    <button type="button" class="icon-btn" id="ai-close" aria-controls="ai-panel" title="Đóng">{{ icon('x', 18) }}</button>
+  </div>
+
+  <div class="ai-thread" id="ai-thread">
+    {% if rag_question and rag_answer %}
+    <div class="chat-bubble chat-user">
+      <span class="chat-avatar">{{ icon('user', 14) }}</span>
+      <div class="chat-bubble-body">{{ rag_question }}</div>
+    </div>
+    <div class="chat-bubble chat-ai">
+      <span class="chat-avatar ai">{{ icon('sparkles', 14) }}</span>
+      <div class="chat-bubble-body">
+        <p>{{ rag_answer }}</p>
+        {% if rag_sources %}
+        <div class="chat-sources">
+          {% for s in rag_sources %}<span class="chip">{{ icon('file', 12) }}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if rag_answer_model %}<p class="chat-model muted small-text">{{ icon('info', 12) }}Mô hình: {{ rag_answer_model }}</p>{% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="empty chat-empty">
+      <span class="empty-icon">{{ icon('sparkles', 24) }}</span>
+      <p><strong>Hỏi điều gì đó về tài liệu trong dự án này</strong></p>
+      <p class="muted small-text">Chọn nguồn ở thanh bên trái, sau đó đặt câu hỏi bên dưới.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/ui/projects/{{ project.id }}/ask" class="chat-form" id="ai-form" data-ask-url="/projects/{{ project.id }}/ask">
+    {% if rag_models %}
+    <details class="chat-options">
+      <summary title="Tùy chọn mô hình">{{ icon('sliders', 12) }}<span>Tùy chọn mô hình</span></summary>
       <select name="model" class="model-select">
         <option value="">Tự động chọn mô hình (xoay khi lỗi)</option>
         {% for m in rag_models %}<option value="{{ m }}" {% if m == rag_model_selected %}selected{% endif %}>{{ m }}</option>{% endfor %}
       </select>
-      {% endif %}
-      <button class="btn primary">{{ icon('search', 16) }}Hỏi</button>
+    </details>
+    {% endif %}
+    <div class="chat-input-row">
+      <textarea name="question" maxlength="2000" rows="1" placeholder="Hỏi về tài liệu…" required></textarea>
+      <button class="chat-send" id="ai-submit" type="submit" aria-label="Gửi câu hỏi">{{ icon('send', 15) }}</button>
     </div>
   </form>
-</section>
+</aside>
 {% endblock %}

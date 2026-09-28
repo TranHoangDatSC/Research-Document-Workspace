@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% block title %}Research Document Workspace{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
-  <script src="{{ url_for('static', path='/app.js') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}?v={{ asset_version }}">
+  <script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}" defer></script>
 </head>
 <body>
 <div class="shell" id="shell">
@@ -61,7 +61,6 @@
           <div class="user-menu-panel" id="user-menu-panel">
             <div class="user-menu-head"><strong>{{ current_user.username }}</strong><span class="badge">{{ current_user.role }}</span></div>
             {% if current_user.role == 'admin' %}<a href="/admin/users" class="side-link">{{ icon('layers', 14) }}<span>Quản lý người dùng</span></a>{% endif %}
-            <a href="/docs" class="side-link">{{ icon('book', 14) }}<span>API Docs</span></a>
             <form method="post" action="/logout"><button type="submit" class="side-link">{{ icon('arrow-left', 14) }}<span>Đăng xuất</span></button></form>
           </div>
         </div>
@@ -70,11 +69,24 @@
     </header>
 
     <div class="body">
+      {% block sources %}{% endblock %}
       <main class="canvas" id="main">{% block content %}{% endblock %}</main>
       {% block inspector %}{% endblock %}
     </div>
   </div>
 
+  {% block ai_chat %}{% endblock %}
 </div>
+
+<dialog class="doc-modal" id="doc-modal" aria-label="Xem nhanh tài liệu">
+  <div class="doc-modal-inner">
+    <button type="button" class="icon-btn doc-modal-close" data-doc-modal-close aria-label="Đóng">{{ icon('x', 16) }}</button>
+    <div class="doc-modal-body" id="doc-modal-body"></div>
+    <div class="doc-modal-foot">
+      <a class="btn ghost sm" id="doc-modal-full-link" href="#">{{ icon('panel-right', 13) }}Xem đầy đủ</a>
+      <button type="button" class="btn secondary sm" data-doc-modal-close>Đóng</button>
+    </div>
+  </div>
+</dialog>
 </body>
 </html>

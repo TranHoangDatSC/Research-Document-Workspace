@@ -1,5 +1,6 @@
 """Server-rendered UI. Calls shared Python services, never loopback HTTP."""
 import json
+import time
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -20,6 +21,9 @@ templates.env.globals["icon"] = icon
 templates.env.filters["filesize"] = filesize
 templates.env.filters["dt"] = fmt_datetime
 templates.env.filters["pretty_json"] = pretty_json
+# Cache-busts /static/* on every process start so a redeploy can't get stuck
+# behind a browser's cached style.css/app.js.
+templates.env.globals["asset_version"] = str(int(time.time()))
 
 # Fields stored in PostgreSQL; everything else in a merged document comes from MongoDB.
 SQL_FIELDS = {"id", "project_id", "original_name", "object_name", "content_type", "size_bytes", "status", "created_at"}
@@ -59,10 +63,31 @@ def logout(request: Request):
     response.delete_cookie(core_auth.SESSION_COOKIE)
     return response
 
+PROJECTS_PAGE_SIZE = 6
+
+def pagination_window(page, total_pages):
+    """Page numbers to render, with None standing in for an ellipsis gap."""
+    pages = sorted({1, total_pages, page - 1, page, page + 1} & set(range(1, total_pages + 1)))
+    windowed = []
+    for i, n in enumerate(pages):
+        if i and n - pages[i - 1] > 1:
+            windowed.append(None)
+        windowed.append(n)
+    return windowed
+
 @router.get("/")
-def home(request: Request, offset: int = Query(default=0, ge=0)):
+def home(request: Request, page: int = Query(default=1, ge=1)):
     health = json.loads(health_ready().body)
-    return render(request, "index.html", projects=projects.list_projects(20, offset), health=health, offset=offset)
+    total = projects.count_projects()
+    total_pages = max(1, -(-total // PROJECTS_PAGE_SIZE))
+    page = min(page, total_pages)
+    offset = (page - 1) * PROJECTS_PAGE_SIZE
+    return render(
+        request, "index.html", health=health,
+        projects=projects.list_projects(PROJECTS_PAGE_SIZE, offset),
+        page=page, total_pages=total_pages, total_projects=total,
+        page_numbers=pagination_window(page, total_pages),
+    )
 
 @router.post("/ui/projects")
 def create_project(request: Request, name: Annotated[str, Form(max_length=200)] = "", description: Annotated[str, Form(max_length=5000)] = ""):
@@ -84,9 +109,9 @@ def upload(request: Request, project_id: UUID, file: Annotated[UploadFile, File(
     return RedirectResponse(f"/ui/documents/{row['id']}", status_code=303)
 
 @router.post("/ui/projects/{project_id}/ask")
-def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = ""):
+def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = "", document_ids: Annotated[list[str], Form()] = []):
     project = projects.get_project(project_id)
-    result = rag_service.ask_project(project_id, question, model or None)
+    result = rag_service.ask_project(project_id, question, model or None, document_ids or None)
     return render(
         request, "project_detail.html", project=project, active_project_id=project["id"],
         documents=documents.list_documents(project_id, 20, 0), offset=0, rag_models=llm.available_models(),
@@ -99,7 +124,11 @@ def document_page(request: Request, document_id: UUID):
     row = documents.get_document(document_id)
     project = projects.get_project(row["project_id"])
     mongo_document = {k: v for k, v in row.items() if k not in SQL_FIELDS}
-    return render(request, "document_detail.html", document=row, project=project, active_project_id=project["id"], mongo_document=mongo_document)
+    return render(
+        request, "document_detail.html", document=row, project=project, active_project_id=project["id"],
+        mongo_document=mongo_document, documents=documents.list_documents(project["id"], 20, 0), offset=0,
+        active_document_id=row["id"],
+    )
 
 @router.post("/ui/documents/{document_id}/extract")
 def extract(request: Request, document_id: UUID):

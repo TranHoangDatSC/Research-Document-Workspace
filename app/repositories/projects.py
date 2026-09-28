@@ -29,6 +29,13 @@ def list_projects(limit, offset):
             return cursor.fetchall()
 
 
+def count_projects():
+    with postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM projects")
+            return cursor.fetchone()[0]
+
+
 def get_project(project_id):
     with postgres_connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:

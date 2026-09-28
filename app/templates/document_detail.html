@@ -3,6 +3,10 @@
 {% block crumbs %}<a href="/">Dự án</a>{{ icon('chevron-right', 14) }}<a href="/ui/projects/{{ project.id }}">{{ project.name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">{{ document.original_name }}</span>{% endblock %}
 {% block topbar_actions %}<button type="button" class="icon-btn" id="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="Ẩn/hiện bảng lưu trữ">{{ icon('panel-right', 18) }}</button>{% endblock %}
 
+{% block sources %}
+{% include "_sources_panel.html" %}
+{% endblock %}
+
 {% block content %}
 <div class="page-head doc-head">
   <div class="doc-title">

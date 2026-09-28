@@ -1,0 +1,62 @@
+<aside class="sources-panel" id="sources-panel" aria-label="Nguồn tài liệu của dự án">
+  <div class="sources-head">
+    <h2 class="side-title">Nguồn tài liệu</h2>
+    <span class="muted small-text">{{ documents|length }}</span>
+  </div>
+
+  <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row">
+    <label class="upload-btn" for="file-input">{{ icon('plus', 14) }}<span>Thêm nguồn</span></label>
+    <input name="file" type="file" required accept=".txt,.pdf,.docx" id="file-input" class="sr-only">
+    <button type="submit" class="upload-go" title="Tải lên" aria-label="Tải tài liệu lên">{{ icon('upload', 14) }}</button>
+    <details class="upload-more">
+      <summary title="Tags, tác giả, metadata">{{ icon('sliders', 13) }}</summary>
+      <div class="stack tight">
+        <label class="field">Tags, cách nhau bởi dấu phẩy
+          <input name="tags" maxlength="5000" placeholder="cloud,docker">
+        </label>
+        <label class="field">Tác giả, cách nhau bởi dấu phẩy
+          <input name="authors" maxlength="5000">
+        </label>
+        <label class="field">Metadata bổ sung (JSON object)
+          <textarea name="custom_metadata" maxlength="16000" rows="2" class="mono" spellcheck="false">{}</textarea>
+        </label>
+      </div>
+    </details>
+  </form>
+  <p class="upload-hint muted small-text" id="file-hint">.txt · .pdf · .docx · tối đa 10 MiB — hoặc kéo thả vào đây</p>
+
+  <nav class="source-list" aria-label="Danh sách tài liệu">
+    {% for doc in documents %}
+    <div class="source-item {{ doc.status }}{% if active_document_id and doc.id == active_document_id %} active{% endif %}">
+      {% if doc.status == 'ready' %}
+      <input type="checkbox" class="source-check" form="ai-form" name="document_ids" value="{{ doc.id }}" checked title="Dùng khi hỏi AI" aria-label="Dùng {{ doc.original_name }} khi hỏi AI">
+      {% else %}
+      <span class="source-check-spacer" aria-hidden="true"></span>
+      {% endif %}
+      {% if doc.status == 'ready' %}
+      <a class="source-main" href="/ui/documents/{{ doc.id }}" title="{{ doc.original_name }}">
+      {% else %}
+      <span class="source-main" title="{{ doc.original_name }}">
+      {% endif %}
+        <span class="source-name">{{ doc.original_name }}</span>
+        <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
+      {% if doc.status == 'ready' %}</a>{% else %}</span>{% endif %}
+      {% if doc.status == 'deleting' %}
+      <a class="source-action" href="/ui/documents/{{ doc.id }}/delete" title="Thử xóa lại" aria-label="Thử xóa lại {{ doc.original_name }}">{{ icon('refresh', 13) }}</a>
+      {% elif doc.status != 'pending' %}
+      <a class="source-action" href="/ui/documents/{{ doc.id }}/delete" title="Xóa tài liệu" aria-label="Xóa {{ doc.original_name }}">{{ icon('trash', 13) }}</a>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="side-empty">Chưa có tài liệu nào.<br>Tải lên ở khung phía trên.</p>
+    {% endfor %}
+  </nav>
+
+  {% if offset > 0 or documents|length == 20 %}
+  <nav class="pager compact" aria-label="Phân trang tài liệu">
+    {% if offset > 0 %}<a class="pager-btn" href="/ui/projects/{{ project.id }}?offset={{ [0, offset-20]|max }}">{{ icon('arrow-left', 13) }}</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 13) }}</span>{% endif %}
+    <span class="pager-info">Trang {{ (offset // 20) + 1 }}</span>
+    {% if documents|length == 20 %}<a class="pager-btn" href="/ui/projects/{{ project.id }}?offset={{ offset+20 }}">{{ icon('chevron-right', 13) }}</a>{% else %}<span class="pager-btn disabled">{{ icon('chevron-right', 13) }}</span>{% endif %}
+  </nav>
+  {% endif %}
+</aside>

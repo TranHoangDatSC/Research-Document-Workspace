@@ -306,6 +306,20 @@ class AskProjectServiceTests(unittest.TestCase):
                 service.ask_project(self.project_id, "docker?")
         self.assertEqual(caught.exception.status_code, 503)
 
+    def test_document_ids_scopes_answer_to_selected_sources(self):
+        kept = self.add_document("cloud.txt", "Docker and cloud content here.")
+        self.add_document("recipe.txt", "Docker and cloud content here.")
+        with patch.object(llm, "ask", lambda prompt, preferred_model=None: ("ok", "fake-model")):
+            result = service.ask_project(self.project_id, "docker?", document_ids=[str(kept)])
+        self.assertEqual(len(result["sources"]), 1)
+        self.assertEqual(result["sources"][0]["document_id"], str(kept))
+
+    def test_empty_document_ids_rejected(self):
+        self.add_document("cloud.txt", "Docker content.")
+        with self.assertRaises(HTTPException) as caught:
+            service.ask_project(self.project_id, "docker?", document_ids=[])
+        self.assertEqual(caught.exception.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

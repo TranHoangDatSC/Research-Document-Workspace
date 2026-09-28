@@ -23,7 +23,7 @@
 
 <div class="split">
   <section class="card">
-    <div class="card-head"><h2>Dự án</h2><span class="muted small-text">{{ projects|length }} mục{% if offset %} · từ #{{ offset + 1 }}{% endif %}</span></div>
+    <div class="card-head"><h2>Dự án</h2><span class="muted small-text">{{ total_projects }} dự án{% if total_pages > 1 %} · trang {{ page }}/{{ total_pages }}{% endif %}</span></div>
     {% if projects %}
     <div class="project-grid">
       {% for project in projects %}
@@ -42,11 +42,20 @@
       <p class="muted">Tạo dự án đầu tiên bằng biểu mẫu bên cạnh.</p>
     </div>
     {% endif %}
-    <nav class="pager" aria-label="Phân trang dự án">
-      {% if offset > 0 %}<a class="pager-btn" href="/?offset={{ [0, offset-20]|max }}">{{ icon('arrow-left', 14) }}Trang trước</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 14) }}Trang trước</span>{% endif %}
-      <span class="pager-info">Trang {{ (offset // 20) + 1 }}{% if projects %} · {{ offset + 1 }}–{{ offset + projects|length }}{% endif %}</span>
-      {% if projects|length == 20 %}<a class="pager-btn" href="/?offset={{ offset+20 }}">Trang sau {{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled">Trang sau {{ icon('chevron-right', 14) }}</span>{% endif %}
+    {% if total_pages > 1 %}
+    <nav class="pager numbered" aria-label="Phân trang dự án">
+      {% if page > 1 %}<a class="pager-btn" href="/?page={{ page-1 }}" aria-label="Trang trước">{{ icon('arrow-left', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('arrow-left', 14) }}</span>{% endif %}
+      <span class="pager-pages">
+        {% for n in page_numbers %}
+        {% if n is none %}<span class="pager-ellipsis">…</span>
+        {% elif n == page %}<span class="pager-num current" aria-current="page">{{ n }}</span>
+        {% else %}<a class="pager-num" href="/?page={{ n }}">{{ n }}</a>
+        {% endif %}
+        {% endfor %}
+      </span>
+      {% if page < total_pages %}<a class="pager-btn" href="/?page={{ page+1 }}" aria-label="Trang sau">{{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('chevron-right', 14) }}</span>{% endif %}
     </nav>
+    {% endif %}
   </section>
 
   <section class="card" id="new-project">

@@ -21,6 +21,9 @@ def create_project(payload):
 def list_projects(limit=20, offset=0):
     return call(repository.list_projects, limit, offset)
 
+def count_projects():
+    return call(repository.count_projects)
+
 def get_project(project_id):
     row = call(repository.get_project, project_id)
     if row is None:
