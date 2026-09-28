@@ -68,6 +68,11 @@ def document_page(request: Request, document_id: UUID):
     mongo_document = {k: v for k, v in row.items() if k not in SQL_FIELDS}
     return render(request, "document_detail.html", document=row, project=project, active_project_id=project["id"], mongo_document=mongo_document)
 
+@router.post("/ui/documents/{document_id}/extract")
+def extract(request: Request, document_id: UUID):
+    documents.extract_document(document_id)
+    return RedirectResponse(f"/ui/documents/{document_id}", status_code=303)
+
 @router.get("/ui/documents/{document_id}/delete")
 def confirm_delete(request: Request, document_id: UUID):
     row = documents.document_row(document_id)

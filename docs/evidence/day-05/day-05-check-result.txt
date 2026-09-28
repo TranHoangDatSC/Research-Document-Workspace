@@ -1,0 +1,39 @@
+Liveness: PASS
+Readiness: PASS
+Upload sample.txt 201: PASS
+sample.txt has no extracted_text before extraction: PASS
+Extract sample.txt 200: PASS
+sample.txt extraction method: PASS
+sample.txt extracted text matches source: PASS
+sample.txt character count: PASS
+sample.txt not truncated: PASS
+sample.txt extraction persisted across GET: PASS
+sample.txt extraction persisted in MongoDB (direct read): PASS
+Upload sample.pdf 201: PASS
+sample.pdf has no extracted_text before extraction: PASS
+Extract sample.pdf 200: PASS
+sample.pdf extraction method: PASS
+sample.pdf extracted text matches source: PASS
+sample.pdf character count: PASS
+sample.pdf not truncated: PASS
+sample.pdf extraction persisted across GET: PASS
+sample.pdf extraction persisted in MongoDB (direct read): PASS
+Upload sample.docx 201: PASS
+sample.docx has no extracted_text before extraction: PASS
+Extract sample.docx 200: PASS
+sample.docx extraction method: PASS
+sample.docx extracted text matches source: PASS
+sample.docx character count: PASS
+sample.docx not truncated: PASS
+sample.docx extraction persisted across GET: PASS
+sample.docx extraction persisted in MongoDB (direct read): PASS
+Re-extract sample.txt 200: PASS
+Re-extraction leaves exactly one MongoDB row: PASS
+Corrupt PDF still uploads (extension-only check): PASS
+Corrupt PDF extraction returns 422: PASS
+Corrupt PDF leaves no extracted_text in MongoDB: PASS
+Encrypted PDF still uploads: PASS
+Encrypted PDF extraction returns 422: PASS
+Encrypted PDF leaves no extracted_text in MongoDB: PASS
+Extract missing document 404: PASS
+DAY 5 CHECK: PASS

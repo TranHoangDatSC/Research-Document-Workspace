@@ -41,3 +41,8 @@ def download_document(document_id: UUID):
 @router.delete("/documents/{document_id}")
 def delete_document(document_id: UUID):
     return service.delete_document(document_id)
+
+
+@router.post("/documents/{document_id}/extract")
+def extract_document(document_id: UUID):
+    return service.extract_document(document_id)

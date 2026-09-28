@@ -76,6 +76,13 @@ def get_details(document_id):
         )
 
 
+def update_extracted_text(document_id, extracted):
+    with mongo_client() as client:
+        client[os.environ["MONGO_DB"]]["document_details"].update_one(
+            {"document_id": str(document_id)}, {"$set": {"extracted_text": extracted}}
+        )
+
+
 def begin_delete(document_id):
     # One atomic UPDATE commits intent before any external deletion. Pending
     # uploads cannot be deleted while their writer is still finishing.

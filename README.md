@@ -79,11 +79,12 @@ app/
   main.py            tạo FastAPI, gắn router
   api/               route HTTP: health, projects, documents
   schemas/           Pydantic model request/response
-  services/          điều phối upload/download giữa 3 storage
+  services/          điều phối upload/download/trích xuất giữa 3 storage
   repositories/      SQL PostgreSQL + truy vấn MongoDB
+  extractors.py      trích xuất văn bản .txt/.pdf/.docx (hàm thuần, không I/O)
   storage.py         tạo kết nối PostgreSQL/MongoDB/MinIO
   bootstrap.py       tạo + kiểm tra bảng/index/bucket (chạy khi web khởi động)
-tests/integration/   test tích hợp ngày 1–2
+tests/integration/   test tích hợp theo ngày (ngày 1–5)
 samples/             file mẫu dùng khi test
 docs/                api.md, architecture.md, testing.md
 docs/evidence/       bằng chứng test đã lưu (lịch sử, không sửa)

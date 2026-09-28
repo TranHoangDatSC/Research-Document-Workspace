@@ -21,6 +21,7 @@
 
 <div class="tabs" role="tablist" aria-label="Chế độ xem" id="doc-tabs" hidden>
   <button type="button" role="tab" id="tab-info" aria-controls="pane-info" aria-selected="true">{{ icon('info', 15) }}Thông tin</button>
+  <button type="button" role="tab" id="tab-extract" aria-controls="pane-extract" aria-selected="false" tabindex="-1">{{ icon('book', 15) }}Văn bản trích xuất</button>
   <button type="button" role="tab" id="tab-json" aria-controls="pane-json" aria-selected="false" tabindex="-1">{{ icon('braces', 15) }}JSON (MongoDB)</button>
 </div>
 
@@ -46,6 +47,32 @@
       </dl>
     </section>
   </div>
+</div>
+
+<div id="pane-extract" role="tabpanel" aria-labelledby="tab-extract" class="pane">
+  <section class="card">
+    <div class="card-head">
+      <h2>Văn bản trích xuất</h2>
+      <form method="post" action="/ui/documents/{{ document.id }}/extract">
+        <button type="submit" class="btn ghost sm">{{ icon('refresh', 14) }}<span>{{ 'Trích xuất lại' if document.extracted_text else 'Trích xuất văn bản' }}</span></button>
+      </form>
+    </div>
+    {% if document.extracted_text %}
+    <dl class="props">
+      <div><dt>{{ icon('info', 14) }}Phương thức</dt><dd>{{ document.extracted_text.method }}</dd></div>
+      <div><dt>{{ icon('hash', 14) }}Số ký tự</dt><dd>{{ document.extracted_text.character_count }}{% if document.extracted_text.truncated %} <span class="muted">(đã cắt bớt)</span>{% endif %}</dd></div>
+      <div><dt>{{ icon('hash', 14) }}Số từ</dt><dd>{{ document.extracted_text.word_count }}</dd></div>
+      <div><dt>{{ icon('clock', 14) }}Trích xuất lúc</dt><dd>{{ document.extracted_text.extracted_at }}</dd></div>
+    </dl>
+    {% if document.extracted_text.text %}
+    <pre class="json">{{ document.extracted_text.text }}</pre>
+    {% else %}
+    <p class="muted">Không tìm thấy văn bản nào trong tài liệu này.</p>
+    {% endif %}
+    {% else %}
+    <p class="muted">Chưa trích xuất văn bản cho tài liệu này.</p>
+    {% endif %}
+  </section>
 </div>
 
 <div id="pane-json" role="tabpanel" aria-labelledby="tab-json" class="pane">

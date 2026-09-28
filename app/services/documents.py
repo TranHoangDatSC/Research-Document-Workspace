@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote
 from uuid import uuid4
@@ -13,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.responses import Response
 
 from app.bootstrap import bucket_name
+from app.extractors import ExtractionError, extract_text
 from app.repositories import documents as repository
 from app.storage import minio_client
 
@@ -183,9 +185,7 @@ def get_document(document_id):
     return {**row, **details}
 
 
-def download_document(document_id):
-    row = document_row(document_id)
-    require_ready(row)
+def read_object(row, stage):
     try:
         response = minio_client().get_object(bucket_name(), row["object_name"])
         try:
@@ -197,7 +197,14 @@ def download_document(document_id):
         if len(payload) > MAX_BYTES or len(payload) != row["size_bytes"]:
             raise RuntimeError("Stored file size mismatch")
     except Exception as exc:
-        raise storage_error("download", exc, document_id) from None
+        raise storage_error(stage, exc, row["id"]) from None
+    return payload
+
+
+def download_document(document_id):
+    row = document_row(document_id)
+    require_ready(row)
+    payload = read_object(row, "download")
     log.info("document_downloaded document_id=%s size_bytes=%s", document_id, len(payload))
     return Response(
         content=payload,
@@ -233,3 +240,35 @@ def delete_document(document_id):
         raise storage_error("delete-retry-required", exc, document_id) from None
     log.info("document_deleted document_id=%s", document_id)
     return {"document_id": str(document_id), "deleted": True}
+
+
+def extract_document(document_id):
+    """Re-runnable: downloads the stored file, extracts text, overwrites MongoDB."""
+    row = document_row(document_id)
+    require_ready(row)
+    payload = read_object(row, "extract-download")
+    suffix = PurePosixPath(row["object_name"]).suffix.lower()
+    try:
+        result = extract_text(payload, suffix)
+    except ExtractionError as exc:
+        log.info("extraction_rejected document_id=%s code=%s", document_id, exc.code)
+        raise HTTPException(422, f"Text extraction failed: {exc.code}") from None
+
+    extracted = {
+        "text": result.text,
+        "method": result.method,
+        "character_count": result.character_count,
+        "word_count": result.word_count,
+        "truncated": result.truncated,
+        "extracted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        repository.update_extracted_text(document_id, extracted)
+    except Exception as exc:
+        raise storage_error("extract-persist", exc, document_id) from None
+
+    log.info(
+        "document_extracted document_id=%s method=%s characters=%s truncated=%s",
+        document_id, result.method, result.character_count, result.truncated,
+    )
+    return get_document(document_id)
