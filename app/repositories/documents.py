@@ -57,6 +57,14 @@ def list_documents(project_id, limit, offset):
             return cursor.fetchall()
 
 
+def list_all_documents(project_id):
+    """Every document row for a project, no pagination — used to cascade-delete a project."""
+    with postgres_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(f"SELECT {FIELDS} FROM documents WHERE project_id = %s", (project_id,))
+            return cursor.fetchall()
+
+
 def insert_details(details):
     with mongo_client() as client:
         client[os.environ["MONGO_DB"]]["document_details"].insert_one(details.copy())
@@ -80,6 +88,14 @@ def update_extracted_text(document_id, extracted):
     with mongo_client() as client:
         client[os.environ["MONGO_DB"]]["document_details"].update_one(
             {"document_id": str(document_id)}, {"$set": {"extracted_text": extracted}}
+        )
+
+
+def update_details(document_id, tags, authors, custom_metadata):
+    with mongo_client() as client:
+        client[os.environ["MONGO_DB"]]["document_details"].update_one(
+            {"document_id": str(document_id)},
+            {"$set": {"tags": tags, "authors": authors, "custom_metadata": custom_metadata}},
         )
 
 

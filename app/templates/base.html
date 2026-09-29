@@ -10,11 +10,18 @@
 <body>
 <div class="shell" id="shell">
 
-  <aside class="sidebar" id="sidebar" aria-label="Điều hướng dự án">
+  <aside class="sidebar" id="sidebar" aria-label="Điều hướng">
     <a class="brand" href="/">
       <span class="brand-mark">{{ icon('layers', 18) }}</span>
       <span class="brand-text"><strong>RDW</strong><small>Research Document Workspace</small></span>
     </a>
+
+    <nav class="side-section nav-section" aria-label="Điều hướng chính">
+      <a class="tree-item{% if request.url.path == '/' %} active{% endif %}" href="/">{{ icon('layers', 15) }}<span>Tổng quan</span></a>
+      {% if current_user and current_user.role == 'admin' %}
+      <a class="tree-item{% if request.url.path.startswith('/admin') %} active{% endif %}" href="/admin/users">{{ icon('user', 15) }}<span>Quản lý người dùng</span></a>
+      {% endif %}
+    </nav>
 
     <section class="side-section" aria-label="Trạng thái hệ thống">
       <h2 class="side-title">Hệ thống</h2>
@@ -25,14 +32,11 @@
       </ul>
     </section>
 
-    <section class="side-section grow" aria-label="Dự án">
+    <section class="side-section grow" aria-label="Dự án gần đây">
       <div class="side-head">
-        <h2 class="side-title">Dự án</h2>
+        <h2 class="side-title">Dự án gần đây</h2>
         <a class="icon-btn" href="/#new-project" title="Tạo dự án mới" aria-label="Tạo dự án mới">{{ icon('plus', 15) }}</a>
       </div>
-      {% if sidebar_projects|length > 6 %}
-      <label class="search"><span class="sr-only">Lọc dự án</span>{{ icon('search', 14) }}<input type="search" id="project-filter" placeholder="Lọc dự án…" autocomplete="off"></label>
-      {% endif %}
       <nav class="tree" id="project-tree">
         {% for p in sidebar_projects %}
         <a class="tree-item{% if active_project_id and p.id|string == active_project_id|string %} active{% endif %}" href="/ui/projects/{{ p.id }}" title="{{ p.name }}">{{ icon('folder', 15) }}<span>{{ p.name }}</span></a>
@@ -40,6 +44,7 @@
         <p class="side-empty">Chưa có dự án.</p>
         {% endfor %}
       </nav>
+      <a class="side-link see-all" href="/">{{ icon('chevron-right', 13) }}<span>Xem tất cả dự án</span></a>
     </section>
 
   </aside>
@@ -85,6 +90,33 @@
     <div class="doc-modal-foot">
       <a class="btn ghost sm" id="doc-modal-full-link" href="#">{{ icon('panel-right', 13) }}Xem đầy đủ</a>
       <button type="button" class="btn secondary sm" data-doc-modal-close>Đóng</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="doc-modal confirm-modal" id="confirm-modal" aria-label="Xác nhận xóa">
+  <div class="doc-modal-inner">
+    <button type="button" class="icon-btn doc-modal-close" data-confirm-modal-close aria-label="Đóng">{{ icon('x', 16) }}</button>
+    <div class="doc-modal-body" id="confirm-modal-body"></div>
+  </div>
+</dialog>
+
+<dialog class="doc-modal confirm-modal" id="quick-edit-modal" aria-label="Chỉnh sửa">
+  <div class="doc-modal-inner">
+    <button type="button" class="icon-btn doc-modal-close" data-quick-edit-modal-close aria-label="Đóng">{{ icon('x', 16) }}</button>
+    <div class="doc-modal-body" id="quick-edit-modal-body"></div>
+  </div>
+</dialog>
+
+<dialog class="doc-modal upload-modal" id="upload-modal" aria-label="Tùy chọn tài liệu">
+  <div class="doc-modal-inner">
+    <div class="upload-modal-head">
+      <h2>{{ icon('sliders', 15) }}Tùy chọn tài liệu</h2>
+      <button type="button" class="icon-btn" data-upload-modal-close aria-label="Đóng">{{ icon('x', 16) }}</button>
+    </div>
+    <div class="doc-modal-body" id="upload-modal-body"></div>
+    <div class="doc-modal-foot">
+      <button type="button" class="btn primary sm" data-upload-modal-close>Xong</button>
     </div>
   </div>
 </dialog>

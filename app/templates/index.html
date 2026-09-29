@@ -21,9 +21,17 @@
   {% endfor %}
 </section>
 
+{% set qs = ('&q=' ~ search_query|urlencode) if search_query else '' %}
 <div class="split">
   <section class="card">
-    <div class="card-head"><h2>Dự án</h2><span class="muted small-text">{{ total_projects }} dự án{% if total_pages > 1 %} · trang {{ page }}/{{ total_pages }}{% endif %}</span></div>
+    <div class="card-head">
+      <h2>Dự án</h2>
+      <span class="muted small-text">{{ total_projects }} dự án{% if total_pages > 1 %} · trang {{ page }}/{{ total_pages }}{% endif %}</span>
+    </div>
+    <form method="get" action="/" class="project-search">
+      <label class="search inline"><span class="sr-only">Tìm dự án</span>{{ icon('search', 14) }}<input type="search" name="q" value="{{ search_query }}" placeholder="Tìm dự án theo tên…" autocomplete="off"></label>
+      {% if search_query %}<a class="btn ghost sm" href="/">{{ icon('x', 13) }}Xóa lọc</a>{% endif %}
+    </form>
     {% if projects %}
     <div class="project-grid">
       {% for project in projects %}
@@ -38,22 +46,27 @@
     {% else %}
     <div class="empty">
       <span class="empty-icon">{{ icon('folder', 28) }}</span>
+      {% if search_query %}
+      <p><strong>Không tìm thấy dự án nào khớp "{{ search_query }}"</strong></p>
+      <p class="muted">Thử một từ khóa khác hoặc <a href="/">xem tất cả dự án</a>.</p>
+      {% else %}
       <p><strong>Chưa có dự án</strong></p>
       <p class="muted">Tạo dự án đầu tiên bằng biểu mẫu bên cạnh.</p>
+      {% endif %}
     </div>
     {% endif %}
     {% if total_pages > 1 %}
     <nav class="pager numbered" aria-label="Phân trang dự án">
-      {% if page > 1 %}<a class="pager-btn" href="/?page={{ page-1 }}" aria-label="Trang trước">{{ icon('arrow-left', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('arrow-left', 14) }}</span>{% endif %}
+      {% if page > 1 %}<a class="pager-btn" href="/?page={{ page-1 }}{{ qs }}" aria-label="Trang trước">{{ icon('arrow-left', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('arrow-left', 14) }}</span>{% endif %}
       <span class="pager-pages">
         {% for n in page_numbers %}
         {% if n is none %}<span class="pager-ellipsis">…</span>
         {% elif n == page %}<span class="pager-num current" aria-current="page">{{ n }}</span>
-        {% else %}<a class="pager-num" href="/?page={{ n }}">{{ n }}</a>
+        {% else %}<a class="pager-num" href="/?page={{ n }}{{ qs }}">{{ n }}</a>
         {% endif %}
         {% endfor %}
       </span>
-      {% if page < total_pages %}<a class="pager-btn" href="/?page={{ page+1 }}" aria-label="Trang sau">{{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('chevron-right', 14) }}</span>{% endif %}
+      {% if page < total_pages %}<a class="pager-btn" href="/?page={{ page+1 }}{{ qs }}" aria-label="Trang sau">{{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('chevron-right', 14) }}</span>{% endif %}
     </nav>
     {% endif %}
   </section>

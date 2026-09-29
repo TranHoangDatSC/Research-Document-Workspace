@@ -56,8 +56,8 @@ class Cases(unittest.TestCase):
         patches = [
             patch.object(projects,'create_project',create_project),
             patch.object(projects,'get_project',lambda pid:self.projects.get(pid)),
-            patch.object(projects,'list_projects',lambda limit,offset:list(self.projects.values())[offset:offset+limit]),
-            patch.object(projects,'count_projects',lambda:len(self.projects)),
+            patch.object(projects,'list_projects',lambda limit,offset,query=None:list(self.projects.values())[offset:offset+limit]),
+            patch.object(projects,'count_projects',lambda query=None:len(self.projects)),
             patch.object(docs,'project_exists',lambda pid:self.projects.get(pid)),
             patch.object(docs,'get_document',lambda did:self.rows.get(did,{}).copy() or None),
             patch.object(docs,'create_pending',pending),patch.object(docs,'mark_ready',ready),

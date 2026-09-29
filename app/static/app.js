@@ -13,6 +13,96 @@
     return null;
   }
 
+  // ----- tiny markdown renderer for AI answers (headings, bold/italic, lists,
+  // tables, hr, inline code) — the LLM replies in markdown, and showing it as
+  // literal asterisks/hashes is unreadable, so this renders it as real HTML. -----
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function renderInline(text) {
+    var s = escapeHtml(text);
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    s = s.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
+    s = s.replace(/(^|[^\w])_([^_\n]+?)_(?!\w)/g, '$1<em>$2</em>');
+    return s;
+  }
+  function splitTableRow(line) {
+    var cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    return cells.map(function (c) { return c.trim(); });
+  }
+  function renderMarkdown(text) {
+    var lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+    var out = [];
+    var list = null;
+    function flushList() {
+      if (!list) return;
+      out.push('<' + list.tag + '>' + list.items.map(function (it) { return '<li>' + renderInline(it) + '</li>'; }).join('') + '</' + list.tag + '>');
+      list = null;
+    }
+    var i = 0;
+    while (i < lines.length) {
+      var trimmed = lines[i].trim();
+
+      if (trimmed === '') { flushList(); i++; continue; }
+
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) { flushList(); out.push('<hr>'); i++; continue; }
+
+      var heading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+      if (heading) {
+        flushList();
+        var level = Math.min(heading[1].length + 2, 6);
+        out.push('<h' + level + '>' + renderInline(heading[2]) + '</h' + level + '>');
+        i++; continue;
+      }
+
+      if (trimmed.indexOf('|') !== -1 && i + 1 < lines.length && /^[\s|:-]+$/.test(lines[i + 1]) && lines[i + 1].indexOf('-') !== -1) {
+        flushList();
+        var headCells = splitTableRow(trimmed);
+        var rows = [];
+        i += 2;
+        while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') !== -1) {
+          rows.push(splitTableRow(lines[i]));
+          i++;
+        }
+        var thead = '<thead><tr>' + headCells.map(function (c) { return '<th>' + renderInline(c) + '</th>'; }).join('') + '</tr></thead>';
+        var tbody = '<tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + renderInline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody>';
+        out.push('<div class="md-table-wrap"><table class="md-table">' + thead + tbody + '</table></div>');
+        continue;
+      }
+
+      var ul = /^[*\-+]\s+(.*)$/.exec(trimmed);
+      if (ul) {
+        if (!list || list.tag !== 'ul') { flushList(); list = { tag: 'ul', items: [] }; }
+        list.items.push(ul[1]);
+        i++; continue;
+      }
+      var ol = /^\d+[.)]\s+(.*)$/.exec(trimmed);
+      if (ol) {
+        if (!list || list.tag !== 'ol') { flushList(); list = { tag: 'ol', items: [] }; }
+        list.items.push(ol[1]);
+        i++; continue;
+      }
+
+      flushList();
+      var para = [];
+      while (i < lines.length && lines[i].trim() !== '' &&
+        !/^#{1,6}\s+/.test(lines[i].trim()) &&
+        !/^(-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim()) &&
+        !/^[*\-+]\s+/.test(lines[i].trim()) &&
+        !/^\d+[.)]\s+/.test(lines[i].trim())) {
+        para.push(lines[i].trim());
+        i++;
+      }
+      out.push('<p>' + renderInline(para.join(' ')) + '</p>');
+    }
+    flushList();
+    return out.join('');
+  }
+
   // ----- sidebar: collapsible on desktop, drawer on mobile -----
   var sidebarBtn = document.getElementById('toggle-sidebar');
   var scrim = document.getElementById('scrim');
@@ -91,12 +181,12 @@
       });
   }
 
-  // ----- project filter -----
-  var filter = document.getElementById('project-filter');
-  if (filter) filter.addEventListener('input', function () {
-    var q = filter.value.trim().toLowerCase();
-    Array.prototype.forEach.call(document.querySelectorAll('#project-tree .tree-item'), function (a) {
-      a.hidden = q !== '' && a.textContent.toLowerCase().indexOf(q) === -1;
+  // ----- admin user list filter -----
+  var userFilter = document.getElementById('user-filter');
+  if (userFilter) userFilter.addEventListener('input', function () {
+    var q = userFilter.value.trim().toLowerCase();
+    Array.prototype.forEach.call(document.querySelectorAll('#user-table tbody tr'), function (row) {
+      row.hidden = q !== '' && (row.getAttribute('data-username') || '').indexOf(q) === -1;
     });
   });
 
@@ -173,6 +263,16 @@
     aiFab.hidden = false;
     if (aiScrim) aiScrim.hidden = false;
 
+    // A server-rendered answer (from a no-JS form submit, before this script
+    // took over) is still plain escaped text — upgrade it the same way.
+    var staticAnswer = aiThread.querySelector('.chat-bubble.chat-ai .chat-bubble-body > p:first-child');
+    if (staticAnswer) {
+      var mdWrap = document.createElement('div');
+      mdWrap.className = 'md';
+      mdWrap.innerHTML = renderMarkdown(staticAnswer.textContent);
+      staticAnswer.replaceWith(mdWrap);
+    }
+
     function openAi() {
       shell.classList.add('ai-open');
       aiFab.setAttribute('aria-expanded', 'true');
@@ -222,9 +322,7 @@
     function renderAnswer(bubble, data) {
       bubble.classList.remove('chat-thinking');
       var body = bubble.querySelector('.chat-bubble-body');
-      var html = '<p></p>';
-      body.innerHTML = html;
-      body.querySelector('p').textContent = data.answer;
+      body.innerHTML = '<div class="md">' + renderMarkdown(data.answer) + '</div>';
       if (data.sources && data.sources.length) {
         var sources = document.createElement('div');
         sources.className = 'chat-sources';
@@ -308,46 +406,356 @@
     }
   }
 
+  // ----- shared modal plumbing: fetch a page, pull matching elements out of it, show them in a <dialog> -----
+  function fetchAndShowModal(dialog, bodyEl, url, selectors, onInjected) {
+    bodyEl.innerHTML = '<div class="doc-modal-loading"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>';
+    dialog.showModal();
+    fetch(url, { headers: { Accept: 'text/html' } })
+      .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
+      .then(function (result) {
+        if (!dialog.open) return;
+        if (!result.ok) { bodyEl.innerHTML = '<p class="notice">Không tải được nội dung.</p>'; return; }
+        var parsed = new DOMParser().parseFromString(result.html, 'text/html');
+        var nodes = selectors.map(function (sel) { return parsed.querySelector(sel); }).filter(Boolean);
+        bodyEl.innerHTML = '';
+        if (!nodes.length) { bodyEl.innerHTML = '<p class="notice">Không có nội dung để hiển thị.</p>'; return; }
+        nodes.forEach(function (n) { bodyEl.appendChild(n); });
+        if (onInjected) onInjected(bodyEl);
+      })
+      .catch(function () {
+        if (dialog.open) bodyEl.innerHTML = '<p class="notice">Không thể kết nối máy chủ.</p>';
+      });
+  }
+  function wireModalClose(dialog, closeSelector) {
+    function close() { if (dialog.open) dialog.close(); }
+    Array.prototype.forEach.call(dialog.querySelectorAll(closeSelector), function (btn) { btn.addEventListener('click', close); });
+    dialog.addEventListener('click', function (e) { if (e.target === dialog) close(); });
+    return close;
+  }
+  function wireCancelLink(bodyEl, closeFn) {
+    var cancel = bodyEl.querySelector('.actions a.btn.secondary');
+    if (cancel) cancel.addEventListener('click', function (ev) { ev.preventDefault(); closeFn(); });
+  }
+  var modalsSupported = window.fetch && window.DOMParser;
+
+  // ----- friendlier metadata editor: key/value rows (with nested groups) instead of raw JSON.
+  // Reused for both the upload form and the document-edit form (any textarea marked
+  // data-kv-metadata), wherever it happens to live at the time it's attached. -----
+  var KV_SUGGESTIONS = [
+    { key: 'year', hint: 'Năm xuất bản / tạo tài liệu (số)' },
+    { key: 'source', hint: 'Nguồn gốc tài liệu (hội nghị, tạp chí, nội bộ…)' },
+    { key: 'doi', hint: 'Mã định danh DOI, nếu có' },
+    { key: 'keywords', hint: 'Từ khóa nghiên cứu' },
+    { key: 'language', hint: 'Ngôn ngữ tài liệu (vi, en, …)' },
+    { key: 'publisher', hint: 'Đơn vị / nhà xuất bản' },
+    { key: 'version', hint: 'Phiên bản tài liệu' },
+    { key: 'note', hint: 'Ghi chú thêm' },
+  ];
+  var kvHints = {};
+  KV_SUGGESTIONS.forEach(function (s) { kvHints[s.key] = s.hint; });
+
+  function ensureKvDatalist() {
+    if (document.getElementById('metadata-key-suggestions')) return;
+    var datalist = document.createElement('datalist');
+    datalist.id = 'metadata-key-suggestions';
+    KV_SUGGESTIONS.forEach(function (s) {
+      var opt = document.createElement('option');
+      opt.value = s.key;
+      opt.label = s.hint;
+      datalist.appendChild(opt);
+    });
+    document.body.appendChild(datalist);
+  }
+  function coerceValue(str) {
+    var t = str.trim();
+    if (t === '') return '';
+    if (t === 'true') return true;
+    if (t === 'false') return false;
+    if (t === 'null') return null;
+    if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+    return str;
+  }
+  function valueToText(v) {
+    if (v === null) return 'null';
+    if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+    return v;
+  }
+  function objectToEntries(obj) {
+    return Object.keys(obj).map(function (k) { return [k, obj[k]]; });
+  }
+  function makeKvRow(key, value) {
+    var row = document.createElement('div');
+    row.className = 'kv-row';
+    var main = document.createElement('div');
+    main.className = 'kv-row-main';
+    var fields = document.createElement('div');
+    fields.className = 'kv-fields';
+
+    var keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'kv-key';
+    keyInput.placeholder = 'Tên trường (vd: year)';
+    keyInput.setAttribute('list', 'metadata-key-suggestions');
+    keyInput.value = key || '';
+
+    var hint = document.createElement('small');
+    hint.className = 'kv-hint';
+    hint.hidden = true;
+    function syncHint() {
+      var h = kvHints[keyInput.value.trim()];
+      if (h) { hint.textContent = h; hint.hidden = false; } else { hint.hidden = true; }
+    }
+    keyInput.addEventListener('input', syncHint);
+
+    fields.appendChild(keyInput);
+    fields.appendChild(hint);
+
+    var valueInput = null;
+    var nestedGroup = null;
+    var wasArray = Array.isArray(value);
+
+    function useValueInput(text) {
+      if (nestedGroup) { nestedGroup.remove(); nestedGroup = null; }
+      valueInput = document.createElement('input');
+      valueInput.type = 'text';
+      valueInput.className = 'kv-value';
+      valueInput.placeholder = 'Giá trị';
+      valueInput.value = text || '';
+      fields.appendChild(valueInput);
+      toggleBtn.textContent = 'Nhóm';
+      toggleBtn.title = 'Chuyển thành nhóm con';
+    }
+    function useNestedGroup(entries) {
+      if (valueInput) { valueInput.remove(); valueInput = null; }
+      nestedGroup = buildKvGroup(entries || []);
+      fields.appendChild(nestedGroup);
+      toggleBtn.textContent = 'Giá trị';
+      toggleBtn.title = 'Chuyển thành giá trị đơn';
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'kv-row-actions';
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'kv-icon-btn kv-toggle';
+    toggleBtn.addEventListener('click', function () {
+      if (nestedGroup) useValueInput(''); else useNestedGroup([]);
+    });
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'kv-icon-btn danger';
+    removeBtn.title = 'Xóa trường';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', function () { row.remove(); });
+    actions.appendChild(toggleBtn);
+    actions.appendChild(removeBtn);
+
+    if (value !== null && typeof value === 'object' && !wasArray) {
+      useNestedGroup(objectToEntries(value));
+    } else if (wasArray) {
+      useValueInput(value.join(', '));
+    } else {
+      useValueInput(valueToText(value));
+    }
+    syncHint();
+
+    main.appendChild(fields);
+    main.appendChild(actions);
+    row.appendChild(main);
+
+    row.kvGetEntry = function () {
+      var k = keyInput.value.trim();
+      if (!k) return null;
+      if (nestedGroup) return [k, serializeKvGroup(nestedGroup)];
+      var raw = valueInput ? valueInput.value : '';
+      if (wasArray) {
+        var parts = raw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s !== ''; });
+        return [k, parts];
+      }
+      return [k, coerceValue(raw)];
+    };
+    return row;
+  }
+  function buildKvGroup(entries) {
+    var group = document.createElement('div');
+    group.className = 'kv-group';
+    entries.forEach(function (e) { group.appendChild(makeKvRow(e[0], e[1])); });
+    var addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'kv-add-row-btn';
+    addBtn.textContent = '+ Thêm trường';
+    addBtn.addEventListener('click', function () { group.insertBefore(makeKvRow('', ''), addBtn); });
+    group.appendChild(addBtn);
+    return group;
+  }
+  function serializeKvGroup(group) {
+    var result = {};
+    Array.prototype.forEach.call(group.children, function (row) {
+      if (!row.kvGetEntry) return;
+      var entry = row.kvGetEntry();
+      if (entry) result[entry[0]] = entry[1];
+    });
+    return result;
+  }
+  function attachMetadataEditor(metadataField) {
+    var metadataLabel = metadataField.closest('label.field');
+    if (!metadataLabel || metadataField.kvAttached) return;
+    metadataField.kvAttached = true;
+    ensureKvDatalist();
+
+    function parseCurrentJSON() {
+      var text = metadataField.value.trim() || '{}';
+      try {
+        var obj = JSON.parse(text);
+        if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return null;
+        return obj;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    var wrap = document.createElement('div');
+    wrap.className = 'kv-wrap';
+    metadataLabel.parentNode.insertBefore(wrap, metadataLabel);
+    wrap.appendChild(metadataLabel);
+
+    var editorTitle = document.createElement('div');
+    editorTitle.className = 'kv-editor-title';
+    editorTitle.textContent = 'Metadata bổ sung';
+    var editorRoot = document.createElement('div');
+    editorRoot.className = 'kv-editor';
+    var kvError = document.createElement('p');
+    kvError.className = 'kv-error';
+    kvError.hidden = true;
+    var toggleModeBtn = document.createElement('button');
+    toggleModeBtn.type = 'button';
+    toggleModeBtn.className = 'kv-raw-toggle';
+
+    wrap.insertBefore(editorTitle, metadataLabel);
+    wrap.insertBefore(editorRoot, metadataLabel);
+    wrap.appendChild(kvError);
+    wrap.appendChild(toggleModeBtn);
+
+    var rootGroup = null;
+    var showingRaw = false;
+
+    function rebuildVisual() {
+      var obj = parseCurrentJSON() || {};
+      if (rootGroup) rootGroup.remove();
+      rootGroup = buildKvGroup(objectToEntries(obj));
+      editorRoot.appendChild(rootGroup);
+    }
+    function setMode(raw) {
+      if (raw) {
+        if (rootGroup) metadataField.value = JSON.stringify(serializeKvGroup(rootGroup), null, 2);
+        editorTitle.hidden = true;
+        editorRoot.hidden = true;
+        metadataLabel.hidden = false;
+        toggleModeBtn.textContent = 'Quay lại dạng biểu mẫu';
+      } else {
+        var obj = parseCurrentJSON();
+        if (obj === null) {
+          kvError.hidden = false;
+          kvError.textContent = 'JSON không hợp lệ — sửa lại nội dung rồi thử chuyển chế độ.';
+          return;
+        }
+        kvError.hidden = true;
+        rebuildVisual();
+        editorTitle.hidden = false;
+        editorRoot.hidden = false;
+        metadataLabel.hidden = true;
+        toggleModeBtn.textContent = 'Xem / sửa JSON thô';
+      }
+      showingRaw = raw;
+    }
+    toggleModeBtn.addEventListener('click', function () { setMode(!showingRaw); });
+
+    // Whichever mode is on screen, make sure the real field reflects it before submit.
+    var ownerForm = metadataField.form;
+    if (ownerForm) ownerForm.addEventListener('submit', function () {
+      if (!showingRaw && rootGroup) metadataField.value = JSON.stringify(serializeKvGroup(rootGroup));
+    });
+
+    setMode(false);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
+
   // ----- document quick-look modal: opens a compact <dialog> instead of navigating away -----
   var docModal = document.getElementById('doc-modal');
-  if (docModal && window.fetch && window.DOMParser && typeof docModal.showModal === 'function') {
+  if (docModal && modalsSupported && typeof docModal.showModal === 'function') {
     var docModalBody = document.getElementById('doc-modal-body');
     var docModalFullLink = document.getElementById('doc-modal-full-link');
-
-    function closeDocModal() { if (docModal.open) docModal.close(); }
-    Array.prototype.forEach.call(docModal.querySelectorAll('[data-doc-modal-close]'), function (btn) {
-      btn.addEventListener('click', closeDocModal);
-    });
-    docModal.addEventListener('click', function (e) { if (e.target === docModal) closeDocModal(); });
-
-    function openDocModal(url) {
-      if (docModalFullLink) docModalFullLink.href = url;
-      docModalBody.innerHTML = '<div class="doc-modal-loading"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>';
-      docModal.showModal();
-      fetch(url, { headers: { Accept: 'text/html' } })
-        .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
-        .then(function (result) {
-          if (!docModal.open) return;
-          if (!result.ok) { docModalBody.innerHTML = '<p class="notice">Không tải được tài liệu.</p>'; return; }
-          var parsed = new DOMParser().parseFromString(result.html, 'text/html');
-          var head = parsed.querySelector('.doc-head');
-          var info = parsed.querySelector('#pane-info');
-          docModalBody.innerHTML = '';
-          if (head) docModalBody.appendChild(head);
-          if (info) docModalBody.appendChild(info);
-          if (!head && !info) docModalBody.innerHTML = '<p class="notice">Không có thông tin để hiển thị.</p>';
-        })
-        .catch(function () {
-          if (docModal.open) docModalBody.innerHTML = '<p class="notice">Không thể kết nối máy chủ.</p>';
-        });
-    }
+    wireModalClose(docModal, '[data-doc-modal-close]');
 
     document.addEventListener('click', function (e) {
       var link = e.target.closest('a.source-main[href^="/ui/documents/"]');
       if (!link) return;
       e.preventDefault();
-      openDocModal(link.getAttribute('href'));
+      var url = link.getAttribute('href');
+      if (docModalFullLink) docModalFullLink.href = url;
+      fetchAndShowModal(docModal, docModalBody, url, ['.doc-head', '#pane-info']);
     });
+  }
+
+  // ----- delete confirmation modal (documents AND projects): fetches the existing confirm page and shows it as a dialog -----
+  var confirmModal = document.getElementById('confirm-modal');
+  if (confirmModal && modalsSupported && typeof confirmModal.showModal === 'function') {
+    var confirmModalBody = document.getElementById('confirm-modal-body');
+    var closeConfirmModal = wireModalClose(confirmModal, '[data-confirm-modal-close]');
+
+    document.addEventListener('click', function (e) {
+      var link = e.target.closest('[data-confirm-delete]');
+      if (!link) return;
+      e.preventDefault();
+      fetchAndShowModal(confirmModal, confirmModalBody, link.getAttribute('href'), ['.center-card'], function (body) {
+        wireCancelLink(body, closeConfirmModal);
+      });
+    });
+  }
+
+  // ----- quick-edit modal (project name/description, document tags/authors/metadata) -----
+  var quickEditModal = document.getElementById('quick-edit-modal');
+  if (quickEditModal && modalsSupported && typeof quickEditModal.showModal === 'function') {
+    var quickEditBody = document.getElementById('quick-edit-modal-body');
+    var closeQuickEditModal = wireModalClose(quickEditModal, '[data-quick-edit-modal-close]');
+
+    document.addEventListener('click', function (e) {
+      var link = e.target.closest('[data-quick-edit]');
+      if (!link) return;
+      e.preventDefault();
+      fetchAndShowModal(quickEditModal, quickEditBody, link.getAttribute('href'), ['.card.narrow'], function (body) {
+        wireCancelLink(body, closeQuickEditModal);
+        Array.prototype.forEach.call(body.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
+      });
+    });
+  }
+
+  // ----- upload options modal: moves the tags/authors/metadata fields out of the
+  // cramped sidebar popover into a roomy dialog. The <details> stays in the DOM as
+  // the no-JS fallback home for those fields; JS takes over as soon as it runs. -----
+  var uploadModal = document.getElementById('upload-modal');
+  var uploadMore = document.getElementById('upload-more');
+  if (uploadModal && uploadMore && typeof uploadModal.showModal === 'function') {
+    var uploadModalBody = document.getElementById('upload-modal-body');
+    var advancedFields = document.getElementById('upload-advanced-fields');
+    var uploadFormEl = document.getElementById('upload-form');
+
+    if (advancedFields && uploadFormEl) {
+      Array.prototype.forEach.call(advancedFields.querySelectorAll('input, textarea'), function (f) {
+        f.setAttribute('form', uploadFormEl.id);
+      });
+      uploadModalBody.appendChild(advancedFields);
+    }
+
+    wireModalClose(uploadModal, '[data-upload-modal-close]');
+
+    var uploadSummary = uploadMore.querySelector('summary');
+    if (uploadSummary) {
+      uploadSummary.addEventListener('click', function (e) {
+        e.preventDefault();
+        uploadModal.showModal();
+      });
+    }
   }
 
   // ----- copy JSON -----

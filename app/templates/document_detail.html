@@ -7,6 +7,10 @@
 {% include "_sources_panel.html" %}
 {% endblock %}
 
+{% block ai_chat %}
+{% include "_ai_chat.html" %}
+{% endblock %}
+
 {% block content %}
 <div class="page-head doc-head">
   <div class="doc-title">
@@ -19,7 +23,8 @@
   </div>
   <div class="actions">
     <a class="btn primary" href="/documents/{{ document.id }}/download">{{ icon('download', 16) }}Tải file gốc</a>
-    <a class="btn secondary" href="/ui/documents/{{ document.id }}/delete">{{ icon('trash', 16) }}Xóa tài liệu</a>
+    <a class="btn secondary" href="/ui/documents/{{ document.id }}/edit" data-quick-edit>{{ icon('sliders', 16) }}Sửa metadata</a>
+    <a class="btn secondary" href="/ui/documents/{{ document.id }}/delete" data-confirm-delete>{{ icon('trash', 16) }}Xóa tài liệu</a>
   </div>
 </div>
 

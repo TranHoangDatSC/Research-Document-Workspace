@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sửa tài liệu · Research Document Workspace{% endblock %}
+{% block crumbs %}<a href="/ui/projects/{{ project.id }}">{{ project.name }}</a>{{ icon('chevron-right', 14) }}<a href="/ui/documents/{{ document.id }}">{{ document.original_name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">Sửa</span>{% endblock %}
+{% block content %}
+<section class="card narrow" id="edit-document-card">
+  <div class="card-head"><h2>Sửa metadata</h2><span class="muted small-text">{{ document.original_name }}</span></div>
+  <form method="post" action="/ui/documents/{{ document.id }}/edit" class="stack">
+    <label class="field">Tags, cách nhau bởi dấu phẩy
+      <input name="tags" maxlength="5000" value="{{ document.tags|join(',') }}">
+    </label>
+    <label class="field">Tác giả, cách nhau bởi dấu phẩy
+      <input name="authors" maxlength="5000" value="{{ document.authors|join(',') }}">
+    </label>
+    <label class="field">Metadata bổ sung (JSON object)
+      <textarea name="custom_metadata" data-kv-metadata maxlength="16000" rows="4" class="mono" spellcheck="false">{{ document.custom_metadata|pretty_json }}</textarea>
+    </label>
+    <div class="actions">
+      <button class="btn primary">{{ icon('check', 16) }}Lưu thay đổi</button>
+      <a class="btn secondary" href="/ui/documents/{{ document.id }}">Hủy</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

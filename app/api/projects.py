@@ -16,3 +16,11 @@ def list_projects(limit: int = Query(default=20, ge=1, le=100), offset: int = Qu
 @router.get("/{project_id}", response_model=ProjectRead)
 def get_project(project_id: UUID):
     return service.get_project(project_id)
+
+@router.put("/{project_id}", response_model=ProjectRead)
+def update_project(project_id: UUID, payload: ProjectCreate):
+    return service.update_project(project_id, payload)
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project(project_id: UUID):
+    service.delete_project(project_id)

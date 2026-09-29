@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Xóa dự án · Research Document Workspace{% endblock %}
+{% block crumbs %}<a href="/ui/projects/{{ project.id }}">{{ icon('arrow-left', 14) }} Quay lại dự án</a>{% endblock %}
+{% block content %}
+<section class="card narrow center-card">
+  <span class="warn-icon">{{ icon('warning', 26) }}</span>
+  <h1>Xóa dự án?</h1>
+  <p class="file-pill">{{ icon('folder', 16) }}<strong>{{ project.name }}</strong></p>
+  <p class="muted">Thao tác này xóa toàn bộ tài liệu, file gốc và metadata thuộc dự án này. Không có thùng rác để khôi phục.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/delete" class="actions">
+    <input type="hidden" name="confirm" value="delete">
+    <button class="btn danger">{{ icon('trash', 16) }}Xác nhận xóa dự án</button>
+    <a class="btn secondary" href="/ui/projects/{{ project.id }}">Hủy</a>
+  </form>
+</section>
+{% endblock %}

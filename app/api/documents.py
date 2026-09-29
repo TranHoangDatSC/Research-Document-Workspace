@@ -33,6 +33,16 @@ def get_document(document_id: UUID):
     return service.get_document(document_id)
 
 
+@router.patch("/documents/{document_id}")
+def update_document(
+    document_id: UUID,
+    tags: Annotated[str, Form(max_length=5000)] = "",
+    authors: Annotated[str, Form(max_length=5000)] = "",
+    custom_metadata: Annotated[str, Form(max_length=16000)] = "{}",
+):
+    return service.update_metadata(document_id, tags, authors, custom_metadata)
+
+
 @router.get("/documents/{document_id}/download")
 def download_document(document_id: UUID):
     return service.download_document(document_id)

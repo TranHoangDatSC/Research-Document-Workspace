@@ -8,19 +8,33 @@
   <p class="muted lead">Hai role hiện có: <code>user</code> và <code>admin</code>.</p>
 </div>
 
+<section class="stat-row" aria-label="Thống kê tài khoản">
+  <div class="stat-card"><span class="stat-icon">{{ icon('user', 18) }}</span><div><strong>{{ users|length }}</strong><small>tổng số tài khoản</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('check', 18) }}</span><div><strong>{{ users|selectattr('is_active')|list|length }}</strong><small>đang hoạt động</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('layers', 18) }}</span><div><strong>{{ users|selectattr('role', 'equalto', 'admin')|list|length }}</strong><small>quản trị viên</small></div></div>
+</section>
+
 <div class="split">
   <section class="card">
-    <div class="card-head"><h2>Tài khoản ({{ users|length }})</h2></div>
+    <div class="card-head">
+      <h2>Tài khoản ({{ users|length }})</h2>
+      <label class="search inline"><span class="sr-only">Lọc tài khoản</span>{{ icon('search', 14) }}<input type="search" id="user-filter" placeholder="Lọc theo username…" autocomplete="off"></label>
+    </div>
     <div class="table-wrap">
-      <table class="doc-table">
-        <thead><tr><th>Username</th><th>Role</th><th>Trạng thái</th><th>Tạo lúc</th><th class="right">Thao tác</th></tr></thead>
+      <table class="doc-table" id="user-table">
+        <thead><tr><th>Tài khoản</th><th>Role</th><th>Trạng thái</th><th>Tạo lúc</th><th class="right">Thao tác</th></tr></thead>
         <tbody>
           {% for u in users %}
-          <tr>
-            <td>{{ u.username }}</td>
+          <tr data-username="{{ u.username|lower }}">
+            <td>
+              <div class="user-cell">
+                <span class="user-avatar-sm {{ 'admin' if u.role == 'admin' }}">{{ u.username[:1]|upper }}</span>
+                <strong>{{ u.username }}</strong>
+              </div>
+            </td>
             <td>
               {% if u.id|string == current_user.user_id %}
-              <span class="badge">{{ u.role }}</span>
+              <span class="badge role-badge {{ u.role }}">{{ u.role }}</span>
               {% else %}
               <form method="post" action="/admin/users/{{ u.id }}/role">
                 <select name="role" class="role-select" onchange="this.form.submit()">
@@ -38,7 +52,7 @@
               {% else %}
               <form method="post" action="/admin/users/{{ u.id }}/active" class="row-actions">
                 <input type="hidden" name="is_active" value="{{ 'false' if u.is_active else 'true' }}">
-                <button class="btn ghost sm">{{ 'Khóa' if u.is_active else 'Mở khóa' }}</button>
+                <button type="submit" class="toggle-switch{% if u.is_active %} on{% endif %}" aria-pressed="{{ 'true' if u.is_active else 'false' }}" title="{{ 'Khóa tài khoản' if u.is_active else 'Mở khóa tài khoản' }}"></button>
               </form>
               {% endif %}
             </td>

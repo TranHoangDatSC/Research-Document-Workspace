@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Sửa dự án · Research Document Workspace{% endblock %}
+{% block crumbs %}<a href="/ui/projects/{{ project.id }}">{{ icon('arrow-left', 14) }} Quay lại dự án</a>{% endblock %}
+{% block content %}
+<section class="card narrow" id="edit-project-card">
+  <div class="card-head"><h2>Sửa dự án</h2></div>
+  <form method="post" action="/ui/projects/{{ project.id }}/edit" class="stack">
+    <label class="field">Tên dự án
+      <input name="name" required maxlength="200" value="{{ project.name }}">
+    </label>
+    <label class="field">Mô tả
+      <textarea name="description" maxlength="5000" rows="5">{{ project.description or '' }}</textarea>
+    </label>
+    <div class="actions">
+      <button class="btn primary">{{ icon('check', 16) }}Lưu thay đổi</button>
+      <a class="btn secondary" href="/ui/projects/{{ project.id }}">Hủy</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

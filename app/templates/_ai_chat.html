@@ -1,0 +1,55 @@
+<template id="ai-user-avatar-tpl">{{ icon('user', 14) }}</template>
+<template id="ai-ai-avatar-tpl">{{ icon('sparkles', 14) }}</template>
+<button type="button" class="ai-fab" id="ai-fab" hidden aria-controls="ai-panel" aria-expanded="false" title="Hỏi đáp AI">
+  {{ icon('sparkles', 24) }}
+</button>
+<div class="ai-scrim" id="ai-scrim" hidden></div>
+<aside class="ai-panel" id="ai-panel" aria-label="Hỏi đáp AI">
+  <div class="ai-panel-head">
+    <h2>{{ icon('sparkles', 16) }}Hỏi đáp AI</h2>
+    <button type="button" class="icon-btn" id="ai-close" aria-controls="ai-panel" title="Đóng">{{ icon('x', 18) }}</button>
+  </div>
+
+  <div class="ai-thread" id="ai-thread">
+    {% if rag_question and rag_answer %}
+    <div class="chat-bubble chat-user">
+      <span class="chat-avatar">{{ icon('user', 14) }}</span>
+      <div class="chat-bubble-body">{{ rag_question }}</div>
+    </div>
+    <div class="chat-bubble chat-ai">
+      <span class="chat-avatar ai">{{ icon('sparkles', 14) }}</span>
+      <div class="chat-bubble-body">
+        <p>{{ rag_answer }}</p>
+        {% if rag_sources %}
+        <div class="chat-sources">
+          {% for s in rag_sources %}<span class="chip">{{ icon('file', 12) }}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if rag_answer_model %}<p class="chat-model muted small-text">{{ icon('info', 12) }}Mô hình: {{ rag_answer_model }}</p>{% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="empty chat-empty">
+      <span class="empty-icon">{{ icon('sparkles', 24) }}</span>
+      <p><strong>Hỏi điều gì đó về tài liệu trong dự án này</strong></p>
+      <p class="muted small-text">Chọn nguồn ở thanh bên trái, sau đó đặt câu hỏi bên dưới.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/ui/projects/{{ project.id }}/ask" class="chat-form" id="ai-form" data-ask-url="/projects/{{ project.id }}/ask">
+    {% if rag_models %}
+    <details class="chat-options">
+      <summary title="Tùy chọn mô hình">{{ icon('sliders', 12) }}<span>Tùy chọn mô hình</span></summary>
+      <select name="model" class="model-select">
+        <option value="">Tự động chọn mô hình (xoay khi lỗi)</option>
+        {% for m in rag_models %}<option value="{{ m }}" {% if m == rag_model_selected %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+    </details>
+    {% endif %}
+    <div class="chat-input-row">
+      <textarea name="question" maxlength="2000" rows="1" placeholder="Hỏi về tài liệu…" required></textarea>
+      <button class="chat-send" id="ai-submit" type="submit" aria-label="Gửi câu hỏi">{{ icon('send', 15) }}</button>
+    </div>
+  </form>
+</aside>

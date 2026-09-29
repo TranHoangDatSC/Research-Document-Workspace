@@ -242,6 +242,24 @@ def delete_document(document_id):
     return {"document_id": str(document_id), "deleted": True}
 
 
+def update_metadata(document_id, tags="", authors="", custom_metadata="{}"):
+    row = document_row(document_id)
+    require_ready(row)
+    try:
+        metadata = json.loads(custom_metadata)
+    except ValueError:
+        raise HTTPException(422, "custom_metadata must be a JSON object") from None
+    if not isinstance(metadata, dict):
+        raise HTTPException(422, "custom_metadata must be a JSON object")
+    tag_list, author_list = split_values(tags), split_values(authors)
+    try:
+        repository.update_details(document_id, tag_list, author_list, metadata)
+    except Exception as exc:
+        raise storage_error("update-metadata", exc, document_id) from None
+    log.info("document_metadata_updated document_id=%s", document_id)
+    return get_document(document_id)
+
+
 def extract_document(document_id):
     """Re-runnable: downloads the stored file, extracts text, overwrites MongoDB."""
     row = document_row(document_id)

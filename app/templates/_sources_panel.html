@@ -4,13 +4,13 @@
     <span class="muted small-text">{{ documents|length }}</span>
   </div>
 
-  <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row">
+  <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row" id="upload-form">
     <label class="upload-btn" for="file-input">{{ icon('plus', 14) }}<span>Thêm nguồn</span></label>
     <input name="file" type="file" required accept=".txt,.pdf,.docx" id="file-input" class="sr-only">
     <button type="submit" class="upload-go" title="Tải lên" aria-label="Tải tài liệu lên">{{ icon('upload', 14) }}</button>
-    <details class="upload-more">
+    <details class="upload-more" id="upload-more">
       <summary title="Tags, tác giả, metadata">{{ icon('sliders', 13) }}</summary>
-      <div class="stack tight">
+      <div class="stack tight" id="upload-advanced-fields">
         <label class="field">Tags, cách nhau bởi dấu phẩy
           <input name="tags" maxlength="5000" placeholder="cloud,docker">
         </label>
@@ -18,7 +18,7 @@
           <input name="authors" maxlength="5000">
         </label>
         <label class="field">Metadata bổ sung (JSON object)
-          <textarea name="custom_metadata" maxlength="16000" rows="2" class="mono" spellcheck="false">{}</textarea>
+          <textarea name="custom_metadata" id="custom-metadata-input" data-kv-metadata maxlength="16000" rows="2" class="mono" spellcheck="false">{}</textarea>
         </label>
       </div>
     </details>
@@ -41,10 +41,13 @@
         <span class="source-name">{{ doc.original_name }}</span>
         <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
       {% if doc.status == 'ready' %}</a>{% else %}</span>{% endif %}
+      {% if doc.status == 'ready' %}
+      <a class="source-action source-view" href="/ui/documents/{{ doc.id }}" title="Mở tài liệu chi tiết" aria-label="Mở {{ doc.original_name }} ở trang chi tiết">{{ icon('eye', 14) }}</a>
+      {% endif %}
       {% if doc.status == 'deleting' %}
-      <a class="source-action" href="/ui/documents/{{ doc.id }}/delete" title="Thử xóa lại" aria-label="Thử xóa lại {{ doc.original_name }}">{{ icon('refresh', 13) }}</a>
+      <a class="source-action source-delete" href="/ui/documents/{{ doc.id }}/delete" data-confirm-delete title="Thử xóa lại" aria-label="Thử xóa lại {{ doc.original_name }}">{{ icon('refresh', 13) }}</a>
       {% elif doc.status != 'pending' %}
-      <a class="source-action" href="/ui/documents/{{ doc.id }}/delete" title="Xóa tài liệu" aria-label="Xóa {{ doc.original_name }}">{{ icon('trash', 13) }}</a>
+      <a class="source-action source-delete" href="/ui/documents/{{ doc.id }}/delete" data-confirm-delete title="Xóa tài liệu" aria-label="Xóa {{ doc.original_name }}">{{ icon('trash', 13) }}</a>
       {% endif %}
     </div>
     {% else %}
