@@ -185,6 +185,11 @@ def build_prompt(question, numbered_chunks, full_text=False):
     return f"TÀI LIỆU ({scope}):\n\n{context}\n\n---\nCÂU HỎI: {question}"
 
 
+def strip_citations(text):
+    """Removes [n]-style citation markers (and the space before them)."""
+    return re.sub(r"\s*" + _CITATION_RE.pattern, "", text)
+
+
 def cited_chunks(answer, numbered_chunks):
     """Chunks the answer actually cites via [n], [n][m], [n, m] or [n-m], in
     first-citation order. Out-of-range numbers are ignored."""

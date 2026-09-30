@@ -263,14 +263,33 @@
     aiFab.hidden = false;
     if (aiScrim) aiScrim.hidden = false;
 
-    // A server-rendered answer (from a no-JS form submit, before this script
-    // took over) is still plain escaped text — upgrade it the same way.
-    var staticAnswer = aiThread.querySelector('.chat-bubble.chat-ai .chat-bubble-body > p:first-child');
-    if (staticAnswer) {
+    // Server-rendered answers (the stored chat history) are plain escaped
+    // text — upgrade each one to markdown the same way live answers are.
+    Array.prototype.forEach.call(aiThread.querySelectorAll('.md-source'), function (staticAnswer) {
       var mdWrap = document.createElement('div');
       mdWrap.className = 'md';
       mdWrap.innerHTML = renderMarkdown(staticAnswer.textContent);
       staticAnswer.replaceWith(mdWrap);
+    });
+    aiThread.scrollTop = aiThread.scrollHeight;
+
+    // "New conversation": clear the stored history without a page reload.
+    var clearForm = document.getElementById('ai-clear-form');
+    var emptyTpl = document.getElementById('ai-empty-tpl');
+    if (clearForm && window.fetch) {
+      clearForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (!aiThread.querySelector('.chat-bubble')) return;
+        if (!window.confirm('Bắt đầu cuộc trò chuyện mới? Lịch sử hỏi đáp hiện tại sẽ bị xóa.')) return;
+        fetch(clearForm.getAttribute('data-clear-url'), { method: 'DELETE' })
+          .then(function (r) {
+            if (!r.ok) throw new Error('clear failed');
+            aiThread.innerHTML = emptyTpl ? emptyTpl.innerHTML : '';
+          })
+          .catch(function () {
+            window.alert('Không xóa được lịch sử, thử lại sau.');
+          });
+      });
     }
 
     function openAi() {

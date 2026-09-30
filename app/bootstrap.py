@@ -65,6 +65,11 @@ def initialize_mongodb():
     with mongo_client() as client:
         collection = client[os.environ["MONGO_DB"]]["document_details"]
         collection.create_index("document_id", unique=True)
+        # Chat history (app/repositories/chats.py): always read per
+        # (project, user), newest first.
+        client[os.environ["MONGO_DB"]]["chat_messages"].create_index(
+            [("project_id", 1), ("user_id", 1), ("created_at", -1), ("seq", -1)]
+        )
 
 
 def initialize_minio():

@@ -104,7 +104,7 @@ def create_project(request: Request, name: Annotated[str, Form(max_length=200)] 
 @router.get("/ui/projects/{project_id}")
 def project_page(request: Request, project_id: UUID, offset: int = Query(default=0, ge=0)):
     project = projects.get_project(project_id)
-    return render(request, "project_detail.html", project=project, active_project_id=project["id"], documents=documents.list_documents(project_id, 20, offset), offset=offset, rag_models=llm.available_models())
+    return render(request, "project_detail.html", project=project, active_project_id=project["id"], documents=documents.list_documents(project_id, 20, offset), offset=offset, rag_models=llm.available_models(), chat_messages=chat_history(request, project_id))
 
 @router.get("/ui/projects/{project_id}/edit")
 def edit_project_page(request: Request, project_id: UUID):
@@ -137,16 +137,25 @@ def upload(request: Request, project_id: UUID, file: Annotated[UploadFile, File(
     row = documents.upload_document(project_id, file, tags, authors, custom_metadata)
     return RedirectResponse(f"/ui/documents/{row['id']}", status_code=303)
 
+def current_user_id(request):
+    user = getattr(request.state, "user", None)
+    return user["user_id"] if user else None
+
+def chat_history(request, project_id):
+    user_id = current_user_id(request)
+    return rag_service.get_history(project_id, user_id) if user_id else []
+
 @router.post("/ui/projects/{project_id}/ask")
 def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = "", document_ids: Annotated[list[str], Form()] = []):
-    project = projects.get_project(project_id)
-    result = rag_service.ask_project(project_id, question, model or None, document_ids or None)
-    return render(
-        request, "project_detail.html", project=project, active_project_id=project["id"],
-        documents=documents.list_documents(project_id, 20, 0), offset=0, rag_models=llm.available_models(),
-        rag_question=question, rag_model_selected=model, rag_answer=result["answer"],
-        rag_answer_model=result["model"], rag_sources=result["sources"],
-    )
+    projects.get_project(project_id)
+    rag_service.ask_project(project_id, question, model or None, document_ids or None, user_id=current_user_id(request))
+    # The exchange is now in the stored history, which the project page renders.
+    return RedirectResponse(f"/ui/projects/{project_id}#ai-panel", status_code=303)
+
+@router.post("/ui/projects/{project_id}/chat/clear")
+def clear_chat(request: Request, project_id: UUID):
+    rag_service.clear_history(project_id, current_user_id(request))
+    return RedirectResponse(f"/ui/projects/{project_id}", status_code=303)
 
 @router.get("/ui/documents/{document_id}")
 def document_page(request: Request, document_id: UUID):
@@ -157,6 +166,7 @@ def document_page(request: Request, document_id: UUID):
         request, "document_detail.html", document=row, project=project, active_project_id=project["id"],
         mongo_document=mongo_document, documents=documents.list_documents(project["id"], 20, 0), offset=0,
         active_document_id=row["id"], rag_models=llm.available_models(),
+        chat_messages=chat_history(request, project["id"]),
     )
 
 @router.get("/ui/documents/{document_id}/edit")

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
 from app import domains, llm, rag
+from app.repositories import chats as chats_repository
 from app.repositories import documents as repository
 from app.services import documents as documents_service
 
@@ -15,6 +16,75 @@ log = logging.getLogger("uvicorn.error")
 MAX_QUESTION_LENGTH = 2000
 # Vietnam has no DST; a fixed offset avoids needing tzdata on Windows/slim images.
 _LOCAL_TZ = timezone(timedelta(hours=7))
+
+# Earlier turns sent to the model: enough for "explain point 2 further" or
+# "compare that with the other paper", small enough that a long conversation
+# doesn't crowd out the documents. Long answers are clipped — the model only
+# needs the gist of what it said, the documents are resent every turn anyway.
+HISTORY_MESSAGES = 10
+HISTORY_MESSAGE_MAX_CHARS = 4000
+# Shown in the UI when the chat panel opens.
+DISPLAY_MESSAGES = 50
+
+
+def _history_turns(messages):
+    """Stored messages -> [(role, text)] for llm.ask. Citation numbers are
+    removed from old answers: passages are renumbered every turn, so an old
+    "[3]" would point the model at the wrong passage."""
+    turns = []
+    for m in messages:
+        text = m.get("content") or ""
+        if m.get("role") == "model":
+            text = rag.strip_citations(text)
+        if len(text) > HISTORY_MESSAGE_MAX_CHARS:
+            text = text[:HISTORY_MESSAGE_MAX_CHARS] + " …"
+        turns.append((m.get("role"), text))
+    return turns
+
+
+def _load_history(project_id, user_id):
+    if user_id is None:
+        return []
+    try:
+        return chats_repository.list_messages(project_id, user_id, HISTORY_MESSAGES)
+    except Exception as exc:
+        # History improves answers but is never required for one.
+        log.warning("chat_storage_failed stage=read-history error=%s", type(exc).__name__)
+        return []
+
+
+def _save_exchange(project_id, user_id, question, result):
+    if user_id is None:
+        return
+    try:
+        chats_repository.add_messages([
+            {"project_id": project_id, "user_id": user_id, "role": "user", "content": question},
+            {
+                "project_id": project_id, "user_id": user_id, "role": "model",
+                "content": result["answer"], "sources": result["sources"], "model": result["model"],
+            },
+        ])
+    except Exception as exc:
+        log.warning("chat_storage_failed stage=save-exchange error=%s", type(exc).__name__)
+
+
+def get_history(project_id, user_id):
+    """For display: never breaks the page, an unreadable history shows as empty."""
+    try:
+        return chats_repository.list_messages(project_id, user_id, DISPLAY_MESSAGES)
+    except Exception as exc:
+        log.warning("chat_storage_failed stage=display-history error=%s", type(exc).__name__)
+        return []
+
+
+def clear_history(project_id, user_id):
+    documents_service.require_project(project_id)
+    try:
+        deleted = chats_repository.clear(project_id, user_id)
+    except Exception as exc:
+        log.warning("chat_storage_failed stage=clear error=%s", type(exc).__name__)
+        raise HTTPException(503, "Chat storage is temporarily unavailable") from None
+    log.info("chat_cleared project_id=%s messages=%s", project_id, deleted)
 
 
 def _system_instruction(domain):
@@ -24,15 +94,20 @@ def _system_instruction(domain):
     return f"{domain.system}\n\nHôm nay là ngày {today:%d/%m/%Y}."
 
 
-def _select_chunks(question, chunks, total_characters, domain):
+def _select_chunks(question, chunks, total_characters, domain, history):
     """(numbered chunks for the prompt, full_text flag)."""
     if total_characters <= domain.full_text_max_chars:
         return chunks, True
-    ranked = rag.rank_chunks(question, chunks, domain.top_k, domain.min_relative_score)
+    # A follow-up ("explain that further") has almost no searchable words of
+    # its own; the previous question carries the topic.
+    previous = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
+    query = f"{previous}\n{question}" if previous else question
+    ranked = rag.rank_chunks(query, chunks, domain.top_k, domain.min_relative_score)
     return rag.order_for_reading(ranked), False
 
 
-def ask_project(project_id, question, model=None, document_ids=None):
+def ask_project(project_id, question, model=None, document_ids=None, user_id=None):
+    """`user_id` None = stateless (no history read or written)."""
     documents_service.require_project(project_id)
 
     question = (question or "").strip()
@@ -77,13 +152,15 @@ def ask_project(project_id, question, model=None, document_ids=None):
         )
 
     total_characters = sum(len((d.get("extracted_text") or {}).get("text") or "") for d in documents)
-    numbered, full_text = _select_chunks(question, chunks, total_characters, domain)
+    history = _load_history(project_id, user_id)
+    numbered, full_text = _select_chunks(question, chunks, total_characters, domain, history)
     prompt = rag.build_prompt(question, numbered, full_text=full_text)
 
     try:
         answer, model_used = llm.ask(
             prompt, preferred_model=model or None,
             system=_system_instruction(domain), temperature=domain.temperature,
+            history=_history_turns(history),
         )
     except llm.LLMError as exc:
         log.warning("rag_llm_failed error=%s", exc.message)
@@ -91,10 +168,10 @@ def ask_project(project_id, question, model=None, document_ids=None):
 
     cited = rag.cited_chunks(answer, numbered)
     log.info(
-        "project_asked project_id=%s domain=%s mode=%s chunks_sent=%s chunks_cited=%s model=%s",
-        project_id, domain.name, "full_text" if full_text else "bm25", len(numbered), len(cited), model_used,
+        "project_asked project_id=%s domain=%s mode=%s chunks_sent=%s chunks_cited=%s history=%s model=%s",
+        project_id, domain.name, "full_text" if full_text else "bm25", len(numbered), len(cited), len(history), model_used,
     )
-    return {
+    result = {
         "answer": answer,
         "model": model_used,
         # Only passages the answer cites: a list of everything sent (possibly
@@ -104,3 +181,5 @@ def ask_project(project_id, question, model=None, document_ids=None):
             for number, c in cited
         ],
     }
+    _save_exchange(project_id, user_id, question, result)
+    return result

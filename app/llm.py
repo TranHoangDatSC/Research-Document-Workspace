@@ -74,9 +74,11 @@ def _gemini_generation_config(temperature):
     return config
 
 
-def _call_gemini(api_key, model, prompt, system=None, temperature=None):
+def _call_gemini(api_key, model, prompt, system=None, temperature=None, history=()):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    contents = [{"role": role, "parts": [{"text": text}]} for role, text in history]
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+    payload = {"contents": contents}
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
     config = _gemini_generation_config(temperature)
@@ -101,8 +103,11 @@ def _call_gemini(api_key, model, prompt, system=None, temperature=None):
     }
 
 
-def _call_openai(api_key, model, prompt, system=None, temperature=None):
+def _call_openai(api_key, model, prompt, system=None, temperature=None, history=()):
     messages = [{"role": "system", "content": system}] if system else []
+    messages.extend(
+        {"role": "assistant" if role == "model" else "user", "content": text} for role, text in history
+    )
     messages.append({"role": "user", "content": prompt})
     payload = {"model": model, "messages": messages}
     if temperature is not None:
@@ -153,11 +158,32 @@ def _api_keys():
     return [single] if single else []
 
 
-def _attempt(call, key, model, prompt, system, temperature):
+def _normalize_history(history):
+    """[(role, text)] with role "user"/"model": drops empty turns (an empty
+    part is a Gemini 400) and leading model turns (history must open with the
+    user), and merges same-role neighbours since roles must alternate."""
+    turns = []
+    for role, text in history or ():
+        text = (text or "").strip()
+        if not text or role not in ("user", "model"):
+            continue
+        if not turns and role == "model":
+            continue
+        if turns and turns[-1][0] == role:
+            turns[-1] = (role, turns[-1][1] + "\n\n" + text)
+        else:
+            turns.append((role, text))
+    # The new question is a user turn, so history must end on the model.
+    if turns and turns[-1][0] == "user":
+        turns.pop()
+    return turns
+
+
+def _attempt(call, key, model, prompt, system, temperature, history):
     """Runs one (key, model) combination; never raises — errors come back as data."""
     started = time.monotonic()
     try:
-        text, usage = call(key, model, prompt, system=system, temperature=temperature)
+        text, usage = call(key, model, prompt, system=system, temperature=temperature, history=history)
     except LLMError as exc:
         return None, f"model={model}: {exc.message}"
     except urllib.error.HTTPError as exc:
@@ -175,9 +201,11 @@ def _attempt(call, key, model, prompt, system, temperature):
     return text, None
 
 
-def ask(prompt, preferred_model=None, system=None, temperature=None):
+def ask(prompt, preferred_model=None, system=None, temperature=None, history=None):
     """Returns (answer_text, model_used). Keys outer, models inner, one at a
-    time; `preferred_model` (the person's pick in the UI) goes first."""
+    time; `preferred_model` (the person's pick in the UI) goes first.
+    `history`: earlier turns as [(role, text)], role "user" or "model"."""
+    history = _normalize_history(history)
     provider = current_provider()
     keys = _api_keys()
     if not provider or not keys:
@@ -200,7 +228,7 @@ def ask(prompt, preferred_model=None, system=None, temperature=None):
     for key in keys:
         for model in models:
             attempts += 1
-            answer, error = _attempt(call, key, model, prompt, system, temperature)
+            answer, error = _attempt(call, key, model, prompt, system, temperature, history)
             if answer is not None:
                 return answer, model
             last_error = error

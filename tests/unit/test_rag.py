@@ -383,6 +383,204 @@ class LLMClientTests(unittest.TestCase):
         self.assertEqual(model, "model-b")
 
 
+class HistoryNormalizationTests(unittest.TestCase):
+    def test_drops_empty_and_leading_model_turns_and_merges_same_role(self):
+        turns = llm._normalize_history([
+            ("model", "orphan answer"), ("user", "q1"), ("user", "q1 again"),
+            ("model", ""), ("model", "a1"), ("user", "   "), ("user", "q2"), ("model", "a2"),
+        ])
+        self.assertEqual(turns, [("user", "q1\n\nq1 again"), ("model", "a1"), ("user", "q2"), ("model", "a2")])
+
+    def test_trailing_user_turn_dropped(self):
+        self.assertEqual(llm._normalize_history([("user", "q"), ("model", "a"), ("user", "dangling")]), [("user", "q"), ("model", "a")])
+
+    def test_none_is_empty(self):
+        self.assertEqual(llm._normalize_history(None), [])
+
+
+class HistoryPayloadTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {"LLM_API_KEY": "k"}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for key in ("LLM_API_KEYS", "LLM_MODELS", "LLM_MODEL", "LLM_THINKING_BUDGET"):
+            os.environ.pop(key, None)
+
+    def capture(self, provider, body):
+        os.environ["LLM_PROVIDER"] = provider
+        sent = {}
+        response = MagicMock()
+        response.__enter__ = lambda self: self
+        response.__exit__ = lambda self, *a: None
+        response.read.return_value = body
+        def fake_urlopen(req, timeout=None):
+            sent.update(json.loads(req.data))
+            return response
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            llm.ask("new question", system="sys", history=[("user", "old q"), ("model", "old a")])
+        return sent
+
+    def test_gemini_history_precedes_new_question(self):
+        sent = self.capture("gemini", b'{"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}')
+        self.assertEqual(
+            [(c["role"], c["parts"][0]["text"]) for c in sent["contents"]],
+            [("user", "old q"), ("model", "old a"), ("user", "new question")],
+        )
+
+    def test_openai_history_uses_assistant_role(self):
+        sent = self.capture("openai", b'{"choices": [{"message": {"content": "ok"}}]}')
+        self.assertEqual(
+            [(m["role"], m["content"]) for m in sent["messages"]],
+            [("system", "sys"), ("user", "old q"), ("assistant", "old a"), ("user", "new question")],
+        )
+
+
+class StripCitationsTests(unittest.TestCase):
+    def test_removes_markers_and_preceding_space(self):
+        self.assertEqual(rag.strip_citations("Claim one [1][3]. Claim two [2, 4]."), "Claim one. Claim two.")
+
+
+class ChatHistoryServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.project_id = uuid4()
+        self.user_id = str(uuid4())
+        self.rows, self.details, self.stored = [], {}, []
+        patches = [
+            patch.object(documents_service, "require_project", lambda pid: None),
+            patch.object(repository, "list_documents", lambda pid, limit, offset: list(self.rows)),
+            patch.object(repository, "get_details", lambda did: self.details.get(did)),
+            patch.object(service.chats_repository, "list_messages", lambda pid, uid, limit: self.stored[-limit:]),
+            patch.object(service.chats_repository, "add_messages", lambda messages: self.stored.extend(messages)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        doc_id = uuid4()
+        self.rows.append({"id": doc_id, "original_name": "a.txt", "status": "ready"})
+        self.details[doc_id] = {"document_id": str(doc_id), "extracted_text": {"text": "Docker content."}}
+
+    def ask(self, question, answer="ok [1]", **kwargs):
+        received = {}
+        def fake_ask(prompt, **kw):
+            received.update(kw, prompt=prompt)
+            return answer, "m"
+        with patch.object(llm, "ask", fake_ask):
+            result = service.ask_project(self.project_id, question, user_id=self.user_id, **kwargs)
+        return result, received
+
+    def test_exchange_saved_and_sent_back_as_history(self):
+        self.ask("first question", answer="First answer [1].")
+        self.assertEqual([(m["role"], m["content"]) for m in self.stored], [("user", "first question"), ("model", "First answer [1].")])
+        self.assertEqual(self.stored[1]["sources"][0]["ref"], 1)
+
+        _, received = self.ask("follow up")
+        # Old citation numbers stripped: passages are renumbered every turn.
+        self.assertEqual(received["history"], [("user", "first question"), ("model", "First answer.")])
+
+    def test_long_history_answer_clipped(self):
+        self.stored = [
+            {"role": "user", "content": "q"},
+            {"role": "model", "content": "x" * (service.HISTORY_MESSAGE_MAX_CHARS + 500)},
+        ]
+        _, received = self.ask("next")
+        self.assertLessEqual(len(received["history"][1][1]), service.HISTORY_MESSAGE_MAX_CHARS + 2)
+
+    def test_no_user_id_means_no_history_read_or_written(self):
+        with patch.object(llm, "ask", lambda prompt, **kw: ("ok", "m")):
+            service.ask_project(self.project_id, "q")
+        self.assertEqual(self.stored, [])
+
+    def test_history_read_failure_still_answers(self):
+        def broken(*a):
+            raise RuntimeError("mongo down")
+        with patch.object(service.chats_repository, "list_messages", broken):
+            result, received = self.ask("q")
+        self.assertEqual(result["answer"], "ok [1]")
+        self.assertEqual(received["history"], [])
+
+    def test_history_save_failure_still_returns_answer(self):
+        def broken(*a):
+            raise RuntimeError("mongo down")
+        with patch.object(service.chats_repository, "add_messages", broken):
+            result, _ = self.ask("q")
+        self.assertEqual(result["answer"], "ok [1]")
+
+    def test_follow_up_retrieval_uses_previous_question(self):
+        filler = "\n\n".join(f"Filler paragraph number {i} about gardening and weather." for i in range(40))
+        self.details[self.rows[0]["id"]]["extracted_text"] = {"text": filler + "\n\nThe kubernetes cluster uses etcd for state."}
+        self.stored = [{"role": "user", "content": "How does kubernetes store state?"}, {"role": "model", "content": "..."}]
+        small = domains.Domain(
+            name="t", label="t", system="s", temperature=0.2, chunk_characters=200,
+            chunk_overlap=0, top_k=2, full_text_max_chars=500, min_relative_score=0.25,
+        )
+        with patch.object(domains, "current", lambda: small):
+            _, received = self.ask("explain that further")
+        self.assertIn("etcd", received["prompt"])
+
+    def test_clear_history_storage_failure_is_503(self):
+        def broken(*a):
+            raise RuntimeError("mongo down")
+        with patch.object(service.chats_repository, "clear", broken):
+            with self.assertRaises(HTTPException) as caught:
+                service.clear_history(self.project_id, self.user_id)
+        self.assertEqual(caught.exception.status_code, 503)
+
+
+class ChatApiTests(unittest.TestCase):
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        from app import auth
+        from app.main import app
+        self.user_id = str(uuid4())
+        self.client = TestClient(app)
+        self.client.cookies.set(auth.SESSION_COOKIE, auth.create_session_token(self.user_id, "alice", "user"))
+        self.project_id = uuid4()
+        p = patch.object(documents_service, "require_project", lambda pid: None)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_ask_passes_logged_in_user(self):
+        received = {}
+        def fake_ask_project(project_id, question, model, document_ids, user_id=None):
+            received["user_id"] = user_id
+            return {"answer": "a", "model": "m", "sources": []}
+        with patch.object(service, "ask_project", fake_ask_project):
+            response = self.client.post(f"/projects/{self.project_id}/ask", json={"question": "q"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(received["user_id"], self.user_id)
+
+    def test_get_and_clear_chat_scoped_to_user(self):
+        calls = []
+        with patch.object(service.chats_repository, "list_messages", lambda pid, uid, limit: calls.append(("list", uid)) or [{"role": "user", "content": "hi"}]), \
+             patch.object(service.chats_repository, "clear", lambda pid, uid: calls.append(("clear", uid)) or 1):
+            got = self.client.get(f"/projects/{self.project_id}/chat")
+            cleared = self.client.delete(f"/projects/{self.project_id}/chat")
+        self.assertEqual(got.json(), {"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(cleared.status_code, 204)
+        self.assertEqual(calls, [("list", self.user_id), ("clear", self.user_id)])
+
+    def test_project_page_renders_stored_history(self):
+        from datetime import datetime, timezone
+        from app.services import projects as projects_service
+        project = {"id": self.project_id, "name": "P", "description": "", "created_at": datetime.now(timezone.utc)}
+        history = [
+            {"role": "user", "content": "Câu hỏi <script>"},
+            {"role": "model", "content": "**Trả lời** [1]", "model": "gemini-x",
+             "sources": [{"ref": 1, "document_id": "d", "original_name": "paper.pdf", "chunk_index": 2}]},
+        ]
+        with patch.object(projects_service, "get_project", lambda pid: project), \
+             patch.object(projects_service, "list_projects", lambda *a: []), \
+             patch.object(documents_service, "list_documents", lambda *a: []), \
+             patch.object(service.chats_repository, "list_messages", lambda *a: history):
+            page = self.client.get(f"/ui/projects/{self.project_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Câu hỏi &lt;script&gt;", page.text)  # escaped, not injected
+        self.assertIn('class="md-source"', page.text)
+        self.assertIn("[1] paper.pdf · đoạn 3", page.text)
+        self.assertIn("Mô hình: gemini-x", page.text)
+        self.assertIn('id="ai-clear-form"', page.text)
+
+
 class DomainTests(unittest.TestCase):
     def setUp(self):
         domains._cached.cache_clear()

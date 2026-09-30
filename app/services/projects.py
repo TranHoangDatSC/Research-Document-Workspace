@@ -2,6 +2,7 @@
 import logging
 import psycopg
 from fastapi import HTTPException
+from app.repositories import chats as chats_repository
 from app.repositories import documents as documents_repository
 from app.repositories import projects as repository
 
@@ -48,5 +49,11 @@ def delete_project(project_id):
         raise HTTPException(409, "Dự án có tài liệu đang tải lên; đợi hoàn tất hoặc thất bại rồi thử lại.")
     for doc in docs:
         documents_service.delete_document(doc["id"])
+    try:
+        chats_repository.delete_project(project_id)
+    except Exception as exc:
+        # Orphaned chat messages are unreachable without the project; not
+        # worth blocking the delete over.
+        log.warning("chat_storage_failed stage=delete-project error=%s", type(exc).__name__)
     call(repository.delete_project, project_id)
     log.info("project_deleted project_id=%s document_count=%s", project_id, len(docs))

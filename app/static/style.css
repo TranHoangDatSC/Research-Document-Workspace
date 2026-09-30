@@ -339,7 +339,8 @@ a.source-main { cursor: pointer; }
 .shell.ai-enhanced .ai-panel-head h2 .icon { color: var(--accent); }
 .shell.ai-enhanced .ai-thread { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); }
 .shell.ai-enhanced .ai-panel .chat-form { flex: none; background: var(--surface); border-top: 1px solid var(--border); }
-.shell.ai-enhanced .card#last-answer { display: none; }
+.ai-panel-actions { display: flex; align-items: center; gap: 2px; }
+.ai-panel-actions form { margin: 0; }
 .shell.ai-open .ai-panel { transform: none; }
 .shell.ai-open .ai-scrim { opacity: 1; pointer-events: auto; }
 .shell.ai-open .ai-fab { transform: scale(.4); opacity: 0; pointer-events: none; }

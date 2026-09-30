@@ -27,35 +27,11 @@
   <div class="stat-card"><span class="stat-icon">{{ icon('clock', 18) }}</span><div><strong>{{ project.created_at|dt }}</strong><small>ngày tạo dự án</small></div></div>
 </section>
 
-{% if rag_question and rag_answer %}
-<section class="card" id="last-answer">
-  <div class="card-head"><h2>{{ icon('message-circle', 18) }}Câu trả lời gần nhất</h2></div>
-  <div class="chat-thread">
-    <div class="chat-bubble chat-user">
-      <span class="chat-avatar">{{ icon('user', 14) }}</span>
-      <div class="chat-bubble-body">{{ rag_question }}</div>
-    </div>
-    <div class="chat-bubble chat-ai">
-      <span class="chat-avatar ai">{{ icon('layers', 14) }}</span>
-      <div class="chat-bubble-body">
-        <p>{{ rag_answer }}</p>
-        {% if rag_sources %}
-        <div class="chat-sources">
-          {% for s in rag_sources %}<span class="chip">{{ icon('file', 12) }}{% if s.ref %}[{{ s.ref }}] {% endif %}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
-        </div>
-        {% endif %}
-        {% if rag_answer_model %}<p class="chat-model muted small-text">{{ icon('info', 12) }}Mô hình: {{ rag_answer_model }}</p>{% endif %}
-      </div>
-    </div>
-  </div>
-</section>
-{% else %}
 <section class="card research-hint">
   <span class="empty-icon">{{ icon('folder', 26) }}</span>
   <p><strong>Chọn một tài liệu ở khung bên trái để xem chi tiết</strong></p>
   <p class="muted small-text">Hoặc bấm nút trò chuyện AI ở góc dưới bên phải để hỏi đáp trên các tài liệu đã trích xuất trong dự án này.</p>
 </section>
-{% endif %}
 {% endblock %}
 
 {% block ai_chat %}

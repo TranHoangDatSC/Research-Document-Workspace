@@ -7,6 +7,7 @@ Các module bên trong chỉ để tách trách nhiệm, không phải microserv
 Client ──HTTP──> web (FastAPI :8000)
                   ├── PostgreSQL  projects, documents (id, tên, kích thước, status)
                   ├── MongoDB     document_details (tags, authors, metadata, sha256)
+                  │               chat_messages (lịch sử hỏi đáp AI theo project + user)
                   └── MinIO       bucket MINIO_BUCKET: documents/<id>/original.<ext>
 ```
 

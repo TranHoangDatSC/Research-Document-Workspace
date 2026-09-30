@@ -101,7 +101,22 @@ không dùng embedding/vector DB, xem `app/rag.py`). Các đoạn được đán
 | Chưa có tài liệu nào trong project được trích xuất văn bản | 409 |
 | `LLM_PROVIDER`/`LLM_API_KEY` chưa cấu hình, hoặc lời gọi LLM thất bại | 503 |
 
-Không lưu lịch sử hỏi đáp — mỗi lần hỏi tính độc lập, không có bộ nhớ hội thoại.
+### Lịch sử hội thoại
+
+Mỗi (project, người dùng đăng nhập) có một cuộc hội thoại, lưu trong MongoDB
+(`chat_messages`). Mỗi lần hỏi thành công lưu cặp câu hỏi và câu trả lời (kèm
+`sources`, `model`); 10 tin gần nhất được gửi lại cho LLM làm ngữ cảnh (bỏ số
+`[n]` cũ vì đoạn trích được đánh số lại mỗi lượt, cắt câu trả lời dài quá
+4000 ký tự). Khi truy xuất bằng BM25, câu hỏi trước được ghép vào truy vấn để
+câu hỏi nối tiếp ("giải thích thêm ý đó") vẫn tìm đúng đoạn. Kho lịch sử lỗi
+thì vẫn trả lời, chỉ là không có lịch sử.
+
+| Endpoint | Ý nghĩa |
+| --- | --- |
+| `GET /projects/{project_id}/chat` | `{"messages": [...]}` — 50 tin gần nhất của người dùng hiện tại, cũ trước |
+| `DELETE /projects/{project_id}/chat` | 204 — xóa hội thoại của người dùng hiện tại (503 nếu MongoDB lỗi) |
+
+Xóa project thì xóa luôn lịch sử chat của project đó.
 
 ## Ghi và lỗi giữa chừng
 
