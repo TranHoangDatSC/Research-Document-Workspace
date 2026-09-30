@@ -94,7 +94,8 @@ app/
   auth.py            băm mật khẩu + ký/xác minh cookie session (hàm thuần)
   storage.py         tạo kết nối PostgreSQL/MongoDB/MinIO
   bootstrap.py       tạo + kiểm tra bảng/index/bucket, seed admin đầu tiên
-tests/integration/   test tích hợp theo ngày (ngày 1–6)
+tests/unit/          unit test theo nghiệp vụ, không cần Docker (python -m pytest)
+tests/integration/   test tích hợp theo ngày (ngày 1–6), chạy với stack thật
 samples/             file mẫu dùng khi test
 docs/                api.md, architecture.md, testing.md, hướng dẫn triển khai VPS
 docs/evidence/       bằng chứng test đã lưu (lịch sử, không sửa)

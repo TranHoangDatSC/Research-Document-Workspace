@@ -1,5 +1,40 @@
 # Kiểm thử
 
+Có hai loại test:
+
+| Loại | Thư mục | Cần Docker? | Chạy |
+| --- | --- | --- | --- |
+| Unit test (tự động) | `tests/unit/` | Không | `python -m pytest` |
+| Test tích hợp (kịch bản) | `tests/integration/` | Có, stack đang chạy | từng script, xem các mục bên dưới |
+
+## Unit test
+
+```powershell
+pip install -r requirements-dev.txt   # một lần: pytest + httpx
+python -m pytest                      # hoặc: python -m pytest -v để xem từng ca
+```
+
+Không cần Docker hay API key: `tests/unit/support.py` thay PostgreSQL,
+MongoDB và MinIO bằng bộ nhớ trong (bật lỗi từng kho bằng `backend.fail`),
+LLM được thay bằng bản giả. Route, service, middleware đăng nhập và template
+đều là code thật. Mỗi file ứng với một nghiệp vụ, chia class theo luồng
+**thêm → xem → sửa → xóa**:
+
+| File | Nội dung |
+| --- | --- |
+| `test_auth.py` | Băm mật khẩu, cookie phiên, đăng nhập/đăng xuất, quyền truy cập theo role |
+| `test_users.py` | Quản lý tài khoản (admin): tạo, xem danh sách, đổi role, khóa/mở khóa |
+| `test_projects.py` | Dự án: tạo, xem/tìm/phân trang, sửa, xóa (kéo theo tài liệu và lịch sử chat) |
+| `test_documents.py` | Tài liệu: upload, xem/tải về, sửa metadata, xóa, và phục hồi khi một kho lỗi giữa chừng |
+| `test_extraction.py` | Trích xuất văn bản .txt/.pdf/.docx và nút "Trích xuất văn bản" |
+| `test_ai_retrieval.py` | Chia đoạn, xếp hạng BM25, prompt đánh số, đọc trích dẫn `[n]` |
+| `test_ai_llm_client.py` | Gọi LLM: cấu hình, payload, đọc phản hồi, xoay model/key |
+| `test_ai_chat.py` | Hỏi đáp AI và lịch sử hội thoại: hỏi (lưu), xem, xóa; domain |
+
+`python -m unittest discover -s tests/unit` vẫn chạy được bộ này.
+
+## Test tích hợp
+
 Chạy ở thư mục gốc, stack đang `healthy`. Test ngày 2 chạy trên Windows bằng
 Python ≥ 3.11 (chỉ thư viện chuẩn), gọi `127.0.0.1:8001` và `docker compose exec`.
 
