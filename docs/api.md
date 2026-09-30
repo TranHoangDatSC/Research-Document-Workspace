@@ -83,12 +83,16 @@ Tài liệu chưa từng trích xuất có `extracted_text: null`.
 
 ## Hỏi đáp AI (RAG thu nhỏ)
 
-`POST /projects/{project_id}/ask` tìm các đoạn văn bản liên quan nhất (theo
-số từ khóa trùng, không dùng embedding/vector DB — xem `app/rag.py`) trong
-`extracted_text` của các tài liệu `ready` thuộc project, rồi gửi câu hỏi kèm
-các đoạn đó cho một LLM (`app/llm.py`, Gemini hoặc OpenAI qua `LLM_PROVIDER`
-trong `.env`). Trả về `{"answer", "sources": [{"document_id", "original_name",
-"chunk_index"}]}`.
+`POST /projects/{project_id}/ask` chia `extracted_text` của các tài liệu
+`ready` (đã chọn) thành các đoạn theo ranh giới đoạn văn/câu. Tổng văn bản
+nhỏ (≤ `full_text_max_chars` của domain) thì gửi **toàn văn**; lớn hơn thì
+xếp hạng bằng **BM25** (bỏ dấu, bỏ stopword tiếng Việt, thêm bigram âm tiết —
+không dùng embedding/vector DB, xem `app/rag.py`). Các đoạn được đánh số
+`[1]..[n]` và gửi cho một LLM (`app/llm.py`, Gemini hoặc OpenAI qua
+`LLM_PROVIDER`) cùng system instruction và temperature của domain đang bật
+(`app/domains/<APP_DOMAIN>/`). Trả về `{"answer", "model", "sources": [{"ref",
+"document_id", "original_name", "chunk_index"}]}` — `sources` chỉ gồm các
+đoạn mà câu trả lời thực sự trích dẫn (`ref` = số `[n]` trong `answer`).
 
 | Trường hợp | Mã |
 | --- | --- |

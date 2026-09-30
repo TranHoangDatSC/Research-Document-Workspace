@@ -1,39 +1,114 @@
-"""Lexical retrieval over already-extracted document text (Day 5's
-`extracted_text`). No embeddings, no vector DB: keyword-overlap scoring is
-"RAG thu nhỏ" — good enough for a handful of short research documents per
-project, and needs no extra dependency or paid API for the retrieval step
-itself (only the final answer step calls an LLM, see app/llm.py).
-"""
-import re
+"""Retrieval over already-extracted document text (Day 5's `extracted_text`).
+No embeddings, no vector DB — two pure-Python strategies, picked per question
+by app/services/rag.py:
 
-CHUNK_CHARACTERS = 1000
-CHUNK_OVERLAP = 100
-TOP_K = 6
+- full text: when the selected documents are small enough (domain setting
+  `full_text_max_chars`), every chunk goes to the model. With a handful of
+  short research documents this beats any ranking — nothing relevant can be
+  missed.
+- BM25: otherwise, chunks are ranked with Okapi BM25 over diacritic-folded
+  tokens (Vietnamese stopwords removed) plus adjacent-syllable bigrams, since
+  Vietnamese words are mostly two syllables ("học sinh", "chính trị") and a
+  bag of single syllables loses that.
+
+Chunks are numbered [1]..[n] in the prompt; the model cites those numbers and
+`cited_chunks` maps them back, so the sources shown are the ones actually used.
+"""
+import math
+import re
+import unicodedata
+from collections import Counter
+
+CHUNK_CHARACTERS = 1200
+CHUNK_OVERLAP = 150
+TOP_K = 8
+MIN_RELATIVE_SCORE = 0.25
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
+_PARAGRAPH_RE = re.compile(r"\n\s*\n")
+_SENTENCE_RE = re.compile(r"(?<=[.!?…;:])\s+")
+_CITATION_RE = re.compile(r"\[(\d+(?:\s*[,;–-]\s*\d+)*)\]")
+
+# Diacritic-folded (see _fold): "của" -> "cua". Function words only — anything
+# that could be a content word in some context stays searchable.
+_STOPWORDS = frozenset("""
+va la cua cac nhung mot nhu cho voi trong thi ma co duoc nay do de khi tu tai
+ve se da dang bi boi hay hoac nen vi ra len vao cung rat lai con theo nao gi
+sao the nhieu it moi toi ban chung ta ay kia day neu ma nha hon nhat tren duoi
+giua sau truoc cung khong chi van dieu viec cai chiec nhu vay thuoc
+a an the of to in is are was were be been and or for on with at by from as
+it this that these those what which who how why does do did about into than
+""".split())
 
 
-def _tokenize(text):
-    return set(_WORD_RE.findall(text.lower()))
+def _fold(text):
+    """Lowercase, strip diacritics, đ -> d: lets "hoc sinh" match "học sinh"."""
+    text = unicodedata.normalize("NFD", text.lower()).replace("đ", "d")
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+
+
+def tokenize(text):
+    """Terms for BM25: non-stopword syllables + bigrams of adjacent syllables
+    (a bigram is kept unless both halves are stopwords)."""
+    words = _WORD_RE.findall(_fold(text))
+    terms = [w for w in words if w not in _STOPWORDS]
+    for left, right in zip(words, words[1:]):
+        if left not in _STOPWORDS or right not in _STOPWORDS:
+            terms.append(f"{left}_{right}")
+    return terms
+
+
+def _units(text, limit):
+    """Paragraphs; a paragraph longer than `limit` is split into sentences,
+    and a sentence still longer than `limit` is hard-cut."""
+    units = []
+    for paragraph in _PARAGRAPH_RE.split(text):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if len(paragraph) <= limit:
+            units.append(paragraph)
+            continue
+        for sentence in _SENTENCE_RE.split(paragraph):
+            sentence = sentence.strip()
+            while len(sentence) > limit:
+                units.append(sentence[:limit])
+                sentence = sentence[limit:]
+            if sentence:
+                units.append(sentence)
+    return units
 
 
 def chunk_text(text, chunk_characters=CHUNK_CHARACTERS, overlap=CHUNK_OVERLAP):
+    """Packs whole paragraphs/sentences into chunks of at most
+    `chunk_characters`, never cutting mid-sentence unless a single sentence is
+    longer than a chunk. Consecutive chunks share trailing units of up to
+    `overlap` characters so an idea split across the boundary survives."""
     text = text.strip()
     if not text:
         return []
     chunks = []
-    start = 0
-    length = len(text)
-    while start < length:
-        end = min(start + chunk_characters, length)
-        chunks.append(text[start:end])
-        if end == length:
-            break
-        start = end - overlap
+    current, size = [], 0
+    for unit in _units(text, chunk_characters):
+        if current and size + len(unit) > chunk_characters:
+            chunks.append("\n".join(current))
+            kept, kept_size = [], 0
+            for previous in reversed(current):
+                if kept_size + len(previous) + 1 > overlap:
+                    break
+                kept.insert(0, previous)
+                kept_size += len(previous) + 1
+            if kept_size + len(unit) > chunk_characters:
+                kept, kept_size = [], 0
+            current, size = kept, kept_size
+        current.append(unit)
+        size += len(unit) + 1
+    if current:
+        chunks.append("\n".join(current))
     return chunks
 
 
-def build_chunks(documents):
+def build_chunks(documents, chunk_characters=CHUNK_CHARACTERS, overlap=CHUNK_OVERLAP):
     """documents: iterable of {"document_id", "original_name", "extracted_text"}
     where extracted_text is the app.extractors result dict (or None/missing).
     Returns a flat list of {"document_id", "original_name", "chunk_index", "text"}.
@@ -43,7 +118,7 @@ def build_chunks(documents):
         extracted = doc.get("extracted_text")
         if not extracted or not extracted.get("text"):
             continue
-        for index, piece in enumerate(chunk_text(extracted["text"])):
+        for index, piece in enumerate(chunk_text(extracted["text"], chunk_characters, overlap)):
             chunks.append({
                 "document_id": doc["document_id"],
                 "original_name": doc["original_name"],
@@ -53,31 +128,78 @@ def build_chunks(documents):
     return chunks
 
 
-def rank_chunks(question, chunks, top_k=TOP_K):
-    """Keyword-overlap scoring: cheap, deterministic, no embeddings/API call."""
-    question_words = _tokenize(question)
-    if not question_words:
+def rank_chunks(question, chunks, top_k=TOP_K, min_relative_score=MIN_RELATIVE_SCORE, k1=1.5, b=0.75):
+    """Okapi BM25. Chunks scoring below `min_relative_score` × the best score
+    are dropped, so a one-word coincidental match doesn't pad the context."""
+    query = set(tokenize(question))
+    if not query or not chunks:
         return []
+    docs = [Counter(tokenize(chunk["text"])) for chunk in chunks]
+    total = len(docs)
+    average_length = sum(sum(d.values()) for d in docs) / total or 1
+    document_frequency = Counter(term for d in docs for term in query if term in d)
+
     scored = []
-    for chunk in chunks:
-        overlap = len(question_words & _tokenize(chunk["text"]))
-        if overlap:
-            scored.append((overlap, chunk))
+    for chunk, terms in zip(chunks, docs):
+        length = sum(terms.values())
+        score = 0.0
+        for term in query:
+            frequency = terms.get(term)
+            if not frequency:
+                continue
+            df = document_frequency[term]
+            idf = math.log((total - df + 0.5) / (df + 0.5) + 1)
+            score += idf * frequency * (k1 + 1) / (frequency + k1 * (1 - b + b * length / average_length))
+        if score > 0:
+            scored.append((score, chunk))
+    if not scored:
+        return []
     scored.sort(key=lambda pair: pair[0], reverse=True)
-    return [chunk for _, chunk in scored[:top_k]]
+    floor = scored[0][0] * min_relative_score
+    return [chunk for score, chunk in scored[:top_k] if score >= floor]
 
 
-def build_prompt(question, ranked_chunks):
-    if not ranked_chunks:
+def order_for_reading(chunks):
+    """Document order (by first appearance), then chunk order within a
+    document — passages read as continuous text instead of shuffled by score."""
+    first_seen = {}
+    for chunk in chunks:
+        first_seen.setdefault(chunk["document_id"], len(first_seen))
+    return sorted(chunks, key=lambda c: (first_seen[c["document_id"]], c["chunk_index"]))
+
+
+def build_prompt(question, numbered_chunks, full_text=False):
+    """User turn: numbered passages + the question. The rules for using them
+    live in the domain's system instruction (app/domains/<name>/system.md)."""
+    if not numbered_chunks:
         context = "(Không tìm thấy đoạn văn bản liên quan trong tài liệu đã trích xuất.)"
     else:
         context = "\n\n".join(
-            f"[Tài liệu: {chunk['original_name']} - đoạn {chunk['chunk_index'] + 1}]\n{chunk['text']}"
-            for chunk in ranked_chunks
+            f"[{number}] {chunk['original_name']} — đoạn {chunk['chunk_index'] + 1}\n{chunk['text']}"
+            for number, chunk in enumerate(numbered_chunks, start=1)
         )
-    return (
-        "Bạn là trợ lý đọc tài liệu nghiên cứu. Chỉ trả lời dựa trên nội dung "
-        "trong phần TÀI LIỆU dưới đây. Nếu không tìm thấy thông tin liên quan, "
-        "hãy nói rõ là không có trong tài liệu, không tự suy đoán thêm.\n\n"
-        f"TÀI LIỆU:\n{context}\n\nCÂU HỎI: {question}"
+    scope = (
+        "toàn văn các tài liệu đã chọn" if full_text
+        else "các đoạn liên quan nhất được trích từ tài liệu đã chọn (không phải toàn văn)"
     )
+    return f"TÀI LIỆU ({scope}):\n\n{context}\n\n---\nCÂU HỎI: {question}"
+
+
+def cited_chunks(answer, numbered_chunks):
+    """Chunks the answer actually cites via [n], [n][m], [n, m] or [n-m], in
+    first-citation order. Out-of-range numbers are ignored."""
+    seen = []
+    for match in _CITATION_RE.finditer(answer):
+        numbers = []
+        for part in re.split(r"\s*[,;]\s*", match.group(1)):
+            bounds = re.split(r"\s*[–-]\s*", part)
+            if len(bounds) == 2:
+                low, high = int(bounds[0]), int(bounds[1])
+                if 0 < high - low < 50:
+                    numbers.extend(range(low, high + 1))
+                    continue
+            numbers.append(int(bounds[0]))
+        for number in numbers:
+            if 1 <= number <= len(numbered_chunks) and number not in seen:
+                seen.append(number)
+    return [(number, numbered_chunks[number - 1]) for number in seen]

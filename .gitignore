@@ -30,3 +30,10 @@ logs/
 /artifacts/
 # Local installer archives
 /research-workspace-*.zip
+
+# Reference project (read-only, not ours)
+/Another Project (Reference)/
+
+# Private AI domain packs (app/domains/). Research is the committed one until
+# the thesis report is done; then swap: ignore research, commit novel.
+/app/domains/novel/

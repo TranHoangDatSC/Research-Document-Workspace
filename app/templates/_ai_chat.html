@@ -22,7 +22,7 @@
         <p>{{ rag_answer }}</p>
         {% if rag_sources %}
         <div class="chat-sources">
-          {% for s in rag_sources %}<span class="chip">{{ icon('file', 12) }}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
+          {% for s in rag_sources %}<span class="chip">{{ icon('file', 12) }}{% if s.ref %}[{{ s.ref }}] {% endif %}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
         </div>
         {% endif %}
         {% if rag_answer_model %}<p class="chat-model muted small-text">{{ icon('info', 12) }}Mô hình: {{ rag_answer_model }}</p>{% endif %}

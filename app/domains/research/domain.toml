@@ -1,0 +1,16 @@
+# Domain "research": trợ lý đọc và phân tích tài liệu nghiên cứu.
+# Mọi khóa đều tùy chọn — thiếu thì dùng giá trị mặc định trong app/domains/__init__.py.
+
+label = "Hỗ trợ nghiên cứu"
+
+# Thấp để câu trả lời ổn định, bám nguồn, cùng một định dạng giữa các lần hỏi.
+# Không đặt thì Gemini chạy mặc định ~1.0: giọng văn và cấu trúc đổi mỗi lần.
+temperature = 0.2
+
+[retrieval]
+chunk_characters = 1200
+chunk_overlap = 150
+top_k = 8
+# ~120k ký tự ≈ 35–40k token: dưới ngưỡng này gửi TOÀN VĂN, không cần xếp hạng.
+full_text_max_chars = 120000
+min_relative_score = 0.25

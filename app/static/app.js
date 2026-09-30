@@ -329,7 +329,7 @@
         data.sources.forEach(function (s) {
           var chip = document.createElement('span');
           chip.className = 'chip';
-          chip.textContent = s.original_name + ' · đoạn ' + (s.chunk_index + 1);
+          chip.textContent = (s.ref ? '[' + s.ref + '] ' : '') + s.original_name + ' · đoạn ' + (s.chunk_index + 1);
           sources.appendChild(chip);
         });
         body.appendChild(sources);

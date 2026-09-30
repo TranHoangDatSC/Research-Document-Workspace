@@ -2,16 +2,25 @@
 API). Standard library only (urllib) — one HTTP call does not need an SDK.
 Configured entirely from environment variables; see .env.example.
 
+Every call sends a separate system instruction and an explicit temperature
+(taken from the active domain, see app/domains/). Without them Gemini runs at
+its default ~1.0 and answers drift in tone, length and layout between calls.
+
 The free tier returns 503 ("model overloaded") fairly often at busy times,
 and a given key can also hit its own per-minute quota (429). Neither means
 the *question* failed, so `ask()` rotates through every configured model and
-every configured key (in that order — 503 is a model problem, 429 is a key
-problem) and only gives up after every combination has failed.
+every configured key (keys outer, models inner — 503 is a model problem, 429
+is a key problem) and only gives up after every combination has failed.
+
+Models are tried one at a time, in the configured order, not raced in
+parallel: racing spent one request of every model's free quota per question
+(hitting 429 sooner) and returned whichever model was fastest — usually the
+weakest — so answer quality changed from one question to the next.
 """
-import concurrent.futures
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -24,10 +33,10 @@ DEFAULT_MODELS = {
     "openai": ["gpt-4o-mini", "gpt-4o"],
 }
 
-# Halved from the old 30s: the free tier either answers quickly or is
-# overloaded, and a shorter timeout gets to the (usually working) next
-# model/key sooner instead of sitting on a lost cause.
-REQUEST_TIMEOUT_SECONDS = 15
+# Answers are now longer and structured (and may carry the full text of the
+# selected documents), so 15s cut off legitimate replies. 503/429 come back in
+# well under a second, so this only bounds a genuinely hung request.
+DEFAULT_TIMEOUT_SECONDS = 45
 
 
 class LLMError(Exception):
@@ -36,34 +45,78 @@ class LLMError(Exception):
         super().__init__(message)
 
 
-def _call_gemini(api_key, model, prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-        data = json.loads(response.read())
+def _timeout():
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        raise LLMError("Gemini trả về phản hồi không đúng định dạng mong đợi") from None
+        return float(os.environ.get("LLM_TIMEOUT_SECONDS", "") or DEFAULT_TIMEOUT_SECONDS)
+    except ValueError:
+        return DEFAULT_TIMEOUT_SECONDS
 
 
-def _call_openai(api_key, model, prompt):
-    url = "https://api.openai.com/v1/chat/completions"
-    payload = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode("utf-8")
+def _post_json(url, payload, headers):
     req = urllib.request.Request(
-        url, data=payload, method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        url, data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", **headers},
     )
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-        data = json.loads(response.read())
+    with urllib.request.urlopen(req, timeout=_timeout()) as response:
+        return json.loads(response.read())
+
+
+def _gemini_generation_config(temperature):
+    config = {}
+    if temperature is not None:
+        config["temperature"] = temperature
+    # Opt-in: thinking models (2.5 / "-latest") spend seconds reasoning even on
+    # simple questions. A budget caps that, but the accepted field differs
+    # between model generations — unset means "leave the model's default".
+    budget = os.environ.get("LLM_THINKING_BUDGET", "").strip()
+    if budget.lstrip("-").isdigit():
+        config["thinkingConfig"] = {"thinkingBudget": int(budget)}
+    return config
+
+
+def _call_gemini(api_key, model, prompt, system=None, temperature=None):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+    config = _gemini_generation_config(temperature)
+    if config:
+        payload["generationConfig"] = config
+    data = _post_json(url, payload, {})
     try:
-        return data["choices"][0]["message"]["content"]
+        candidate = data["candidates"][0]
+        # Thinking models may return a "thought" part before the answer.
+        text = "".join(p.get("text", "") for p in candidate["content"]["parts"] if not p.get("thought"))
+    except (KeyError, IndexError, TypeError):
+        raise LLMError("Gemini trả về phản hồi không đúng định dạng mong đợi") from None
+    if not text.strip():
+        reason = candidate.get("finishReason", "?")
+        raise LLMError(f"Gemini trả về câu trả lời rỗng (finishReason={reason})")
+    usage = data.get("usageMetadata") or {}
+    return text, {
+        "input": usage.get("promptTokenCount"),
+        "output": usage.get("candidatesTokenCount"),
+        "thinking": usage.get("thoughtsTokenCount"),
+        "cached": usage.get("cachedContentTokenCount"),
+    }
+
+
+def _call_openai(api_key, model, prompt, system=None, temperature=None):
+    messages = [{"role": "system", "content": system}] if system else []
+    messages.append({"role": "user", "content": prompt})
+    payload = {"model": model, "messages": messages}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    data = _post_json(
+        "https://api.openai.com/v1/chat/completions", payload,
+        {"Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError):
         raise LLMError("OpenAI trả về phản hồi không đúng định dạng mong đợi") from None
+    usage = data.get("usage") or {}
+    return text, {"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")}
 
 
 _PROVIDERS = {
@@ -100,49 +153,31 @@ def _api_keys():
     return [single] if single else []
 
 
-def _attempt(call, key, model, prompt):
-    """Runs one (key, model) combination; never raises — errors come back as data
-    so callers (in particular the parallel racer below) don't need a try/except
-    per future."""
+def _attempt(call, key, model, prompt, system, temperature):
+    """Runs one (key, model) combination; never raises — errors come back as data."""
+    started = time.monotonic()
     try:
-        return True, call(key, model, prompt), model, None
+        text, usage = call(key, model, prompt, system=system, temperature=temperature)
     except LLMError as exc:
-        return False, None, model, exc.message
+        return None, f"model={model}: {exc.message}"
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:200]
-        return False, None, model, f"model={model} HTTP {exc.code}: {detail}"
+        return None, f"model={model} HTTP {exc.code}: {detail}"
     except urllib.error.URLError as exc:
-        return False, None, model, f"model={model}: không kết nối được ({exc.reason})"
+        return None, f"model={model}: không kết nối được ({exc.reason})"
+    except TimeoutError:
+        return None, f"model={model}: quá {_timeout():.0f}s không phản hồi"
+    log.info(
+        "llm_usage model=%s ms=%d input_tokens=%s output_tokens=%s thinking_tokens=%s cached_tokens=%s",
+        model, (time.monotonic() - started) * 1000,
+        usage.get("input"), usage.get("output"), usage.get("thinking"), usage.get("cached"),
+    )
+    return text, None
 
 
-def _race_models(call, key, models, prompt, provider):
-    """Tries every model for one key at once instead of one at a time. A 503 on
-    one model doesn't mean the others are overloaded too, so waiting for them
-    sequentially (the old behaviour) only adds latency for nothing. Returns as
-    soon as one succeeds; the rest keep running in a background thread but are
-    never awaited, so a single slow/timed-out model can't hold up the response.
-    """
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(models))
-    last_error = None
-    attempts = 0
-    try:
-        futures = {executor.submit(_attempt, call, key, model, prompt): model for model in models}
-        for future in concurrent.futures.as_completed(futures):
-            attempts += 1
-            ok, answer, model, error = future.result()
-            if ok:
-                return attempts, answer, model, None
-            last_error = error
-            log.info("llm_attempt_failed provider=%s model=%s", provider, model)
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-    return attempts, None, None, last_error
-
-
-def ask(prompt, preferred_model=None):
-    """Returns (answer_text, model_used). Rotates keys outer, models inner —
-    but within one key, every remaining model is raced in parallel rather
-    than tried one at a time (see _race_models)."""
+def ask(prompt, preferred_model=None, system=None, temperature=None):
+    """Returns (answer_text, model_used). Keys outer, models inner, one at a
+    time; `preferred_model` (the person's pick in the UI) goes first."""
     provider = current_provider()
     keys = _api_keys()
     if not provider or not keys:
@@ -157,29 +192,19 @@ def ask(prompt, preferred_model=None):
     models = available_models()
     if not models:
         raise LLMError("Chưa cấu hình LLM_MODEL/LLM_MODELS trong .env")
+    if preferred_model:
+        models = [preferred_model] + [m for m in models if m != preferred_model]
 
     last_error = None
     attempts = 0
     for key in keys:
-        remaining = models
-        if preferred_model:
-            # Tried alone, not raced: racing it against the fallback models could
-            # return a *different* model's answer even though the person's pick
-            # would have worked fine too.
+        for model in models:
             attempts += 1
-            ok, answer, model, error = _attempt(call, key, preferred_model, prompt)
-            if ok:
+            answer, error = _attempt(call, key, model, prompt, system, temperature)
+            if answer is not None:
                 return answer, model
             last_error = error
-            log.info("llm_attempt_failed provider=%s model=%s", provider, preferred_model)
-            remaining = [m for m in models if m != preferred_model]
-        if not remaining:
-            continue
-        used, answer, model, error = _race_models(call, key, remaining, prompt, provider)
-        attempts += used
-        if answer is not None:
-            return answer, model
-        last_error = error or last_error
+            log.info("llm_attempt_failed provider=%s model=%s", provider, model)
 
     raise LLMError(
         f"Đã thử {attempts} lượt (mô hình × key) đều thất bại. Lỗi gần nhất: {last_error}"
