@@ -112,6 +112,10 @@ button.side-link { width: 100%; border: 0; background: none; font: inherit; curs
 .crumbs .icon { color: var(--border-strong); }
 .crumb-current { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .topbar-actions { display: flex; gap: 6px; }
+.page-actions { display: contents; }
+/* While a document is loading into the main panel (app.js openInMain). */
+.canvas { transition: opacity .15s; }
+.canvas.loading { opacity: .55; pointer-events: none; }
 .icon-btn { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; text-decoration: none; }
 .icon-btn:hover { background: var(--bg); color: var(--text); }
 
@@ -340,10 +344,27 @@ pre.json { background: #14231f; color: #d7ece1; padding: 18px 20px; font-size: 1
 .upload-more .stack.tight { position: absolute; top: 38px; right: 0; z-index: 5; width: 240px; gap: 10px; padding: 14px; background: var(--surface); border-radius: var(--radius-sm); box-shadow: var(--shadow-lift); }
 .upload-more .field { font-size: 12px; }
 
-.source-list { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; }
-.source-item { display: flex; align-items: center; gap: 6px; padding: 0 4px 0 6px; border-radius: var(--radius-sm); border-left: 3px solid transparent; }
-.source-item:hover { background: var(--surface-2); }
-.source-item.active { background: var(--accent-soft); border-left-color: var(--accent); }
+/* Search + kind filter above the list. */
+.source-filter { display: flex; gap: 6px; margin-bottom: 8px; }
+.source-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--muted); }
+.source-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); color: var(--accent); }
+.source-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13px; color: var(--text); }
+.source-kind-filter { flex: none; max-width: 42%; height: 32px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); font: inherit; font-size: 12.5px; color: var(--text); cursor: pointer; }
+.source-kind-filter:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.source-results { display: flex; flex-direction: column; flex: 1; min-height: 0; transition: opacity .15s; }
+.source-results.loading { opacity: .5; }
+.source-results-head { display: flex; justify-content: space-between; align-items: baseline; margin: 2px 2px 8px; font-size: 12px; color: var(--muted); }
+.source-clear { color: var(--accent); font-weight: 600; text-decoration: none; }
+.source-clear:hover { text-decoration: underline; }
+
+/* Items: outlined at rest, green fill on hover or when shown in the main panel. */
+.source-list { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
+.source-item { position: relative; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; border: 1px solid #c6e3d2; border-radius: var(--radius-sm); background: var(--surface); transition: background .12s, border-color .12s; }
+.source-item:hover { background: var(--accent-soft); border-color: var(--accent); }
+.source-item.active { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.source-item.active .source-name { color: var(--accent-hover); }
+.source-item.failed, .source-item.deleting { border-color: #efc2b8; }
+.source-item.pending { border-style: dashed; }
 .source-check, .source-check-spacer { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .source-main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 8px 2px; color: var(--text); text-decoration: none; overflow: hidden; }
 a.source-main { cursor: pointer; }
@@ -359,6 +380,12 @@ a.source-main { cursor: pointer; }
 .source-view:hover { background: var(--accent-soft); color: var(--accent-hover); }
 .source-list .side-empty { text-align: center; padding: 24px 8px; line-height: 1.6; }
 
+.kind-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.kind-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); text-decoration: none; transition: background .12s, border-color .12s; }
+.kind-card:hover, .kind-card.selected { background: var(--accent-soft); border-color: var(--accent); }
+.kind-card .source-kind { width: 34px; height: 34px; border-radius: 9px; }
+.kind-card strong { display: block; font-size: 13.5px; }
+.kind-card small { color: var(--muted); font-size: 12px; }
 .research-hint { display: grid; justify-items: center; text-align: center; gap: 4px; padding: 56px 24px; background: var(--surface-2); border: 0; }
 .research-hint .empty-icon { margin-bottom: 6px; }
 

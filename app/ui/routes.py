@@ -3,6 +3,7 @@ import json
 import time
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPException
@@ -106,10 +107,33 @@ def create_project(request: Request, name: Annotated[str, Form(max_length=200)] 
     row = projects.create_project(payload)
     return RedirectResponse(f"/ui/projects/{row['id']}", status_code=303)
 
+SOURCES_PAGE_SIZE = 20
+
+def sources_context(project_id, offset, q, kind):
+    """Template context for the sources sidebar. The search/filter/page live in
+    the query string and are carried on every sidebar link (`source_qs`), so
+    the sidebar stays as it was while documents open in the main panel."""
+    q = q.strip()
+    kind = kind if kind in file_types.KINDS else ""
+    params = {k: v for k, v in (("q", q), ("kind", kind), ("offset", offset)) if v}
+    return {
+        "documents": documents.list_documents(project_id, SOURCES_PAGE_SIZE, offset, q or None, kind or None),
+        "offset": offset,
+        "source_q": q,
+        "source_kind": kind,
+        "source_kinds": list(file_types.KINDS.values()),
+        "source_qs": urlencode(params),
+        "source_filter_qs": urlencode({k: v for k, v in params.items() if k != "offset"}),
+    }
+
 @router.get("/ui/projects/{project_id}")
-def project_page(request: Request, project_id: UUID, offset: int = Query(default=0, ge=0)):
+def project_page(request: Request, project_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20)):
     project = projects.get_project(project_id)
-    return render(request, "project_detail.html", project=project, active_project_id=project["id"], documents=documents.list_documents(project_id, 20, offset), offset=offset, rag_models=llm.available_models(), chat_messages=chat_history(request, project_id))
+    return render(
+        request, "project_detail.html", project=project, active_project_id=project["id"],
+        kind_totals=documents.kind_totals(project_id), rag_models=llm.available_models(),
+        chat_messages=chat_history(request, project_id), **sources_context(project_id, offset, q, kind),
+    )
 
 @router.get("/ui/projects/{project_id}/edit")
 def edit_project_page(request: Request, project_id: UUID):
@@ -163,15 +187,14 @@ def clear_chat(request: Request, project_id: UUID):
     return RedirectResponse(f"/ui/projects/{project_id}", status_code=303)
 
 @router.get("/ui/documents/{document_id}")
-def document_page(request: Request, document_id: UUID):
+def document_page(request: Request, document_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20)):
     row = documents.get_document(document_id)
     project = projects.get_project(row["project_id"])
     mongo_document = {k: v for k, v in row.items() if k not in SQL_FIELDS}
     return render(
         request, "document_detail.html", document=row, project=project, active_project_id=project["id"],
-        mongo_document=mongo_document, documents=documents.list_documents(project["id"], 20, 0), offset=0,
-        active_document_id=row["id"], rag_models=llm.available_models(),
-        chat_messages=chat_history(request, project["id"]),
+        mongo_document=mongo_document, active_document_id=row["id"], rag_models=llm.available_models(),
+        chat_messages=chat_history(request, project["id"]), **sources_context(project["id"], offset, q, kind),
     )
 
 @router.get("/ui/documents/{document_id}/edit")

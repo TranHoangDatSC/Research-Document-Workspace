@@ -161,6 +161,92 @@ class ViewDocumentTests(DocumentTestCase):
         self.assertEqual(self.client.get(f"/documents/{document['id']}/download").status_code, 409)
 
 
+class SearchAndFilterTests(DocumentTestCase):
+    """Sidebar search by name and filter by kind — server-side, across all pages."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("Forecasting survey.pdf", "cloud_notes.txt", "Forecast chart.png", "demo.mp4"):
+            self.post_file(name, b"x")
+
+    def names(self, **params):
+        return [d["original_name"] for d in self.client.get(f"/projects/{self.project_id}/documents", params=params).json()]
+
+    def test_api_search_is_case_insensitive_substring(self):
+        self.assertEqual(sorted(self.names(q="forecast")), ["Forecast chart.png", "Forecasting survey.pdf"])
+
+    def test_api_filter_by_kind_and_combined(self):
+        self.assertEqual(self.names(kind="video"), ["demo.mp4"])
+        self.assertEqual(self.names(q="forecast", kind="image"), ["Forecast chart.png"])
+        self.assertEqual(self.client.get(f"/projects/{self.project_id}/documents", params={"kind": "spaceship"}).status_code, 422)
+
+    def test_like_wildcards_in_the_query_are_literal(self):
+        from app.repositories.documents import _escape_like
+        self.assertEqual(_escape_like("100%_done\\"), "100\\%\\_done\\\\")
+
+    def test_sidebar_shows_filtered_list_and_keeps_it_on_links(self):
+        html = self.client.get(f"/ui/projects/{self.project_id}", params={"q": "forecast", "kind": "image"}).text
+        sidebar = html.split('id="source-results"', 1)[1].split("</nav>", 1)[0]
+        self.assertIn("Forecast chart.png", sidebar)
+        self.assertNotIn("Forecasting survey.pdf", sidebar)
+        self.assertIn("1 kết quả cho “forecast”", html)
+        self.assertIn('value="forecast"', html)                 # search box keeps the text
+        self.assertIn('<option value="image" selected>', html)  # filter keeps the kind
+        self.assertIn("?q=forecast&amp;kind=image\" title", sidebar)  # opening a document keeps the filter
+
+    def test_document_page_keeps_the_filtered_sidebar(self):
+        png = next(d for d in self.backend.documents.values() if d["original_name"] == "Forecast chart.png")
+        html = self.client.get(f"/ui/documents/{png['id']}", params={"kind": "image"}).text
+        sidebar = html.split('id="source-results"', 1)[1].split("</nav>", 1)[0]
+        self.assertNotIn("demo.mp4", sidebar)
+        self.assertIn(f'source-item ready active" data-document-id="{png["id"]}"', sidebar)
+
+    def test_no_match_offers_to_clear(self):
+        html = self.client.get(f"/ui/projects/{self.project_id}", params={"q": "nothing-like-this"}).text
+        self.assertIn("Không có tài liệu nào khớp", html)
+        self.assertIn("data-source-clear", html)
+
+    def test_unknown_kind_in_the_page_url_is_ignored(self):
+        response = self.client.get(f"/ui/projects/{self.project_id}", params={"kind": "spaceship"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("demo.mp4", response.text)
+
+    def test_pager_keeps_search(self):
+        for i in range(20):
+            self.post_file(f"forecast-{i}.txt", b"x")
+        html = self.client.get(f"/ui/projects/{self.project_id}", params={"q": "forecast"}).text
+        self.assertIn("?q=forecast&amp;offset=20", html)
+
+
+class ProjectOverviewTests(DocumentTestCase):
+    """The main panel on the project page: whole-project totals by kind."""
+
+    def test_totals_cover_every_page_and_group_by_kind(self):
+        for i in range(22):
+            self.post_file(f"paper-{i}.txt", b"x" * 10)
+        self.post_file("clip.mp4", b"x" * 100)
+        self.post_file("photo.png", b"x" * 5)
+        html = self.client.get(f"/ui/projects/{self.project_id}").text
+        main = html.split('id="main"', 1)[1]
+        self.assertIn("<strong>24</strong><small>tệp trong dự án", main)  # not just the 20 in the sidebar
+        self.assertIn("<strong>22</strong><small>tệp có văn bản cho AI", main)
+        self.assertIn('data-kind-filter="video"', main)
+        self.assertIn("22 tệp · 220 B", main)
+
+    def test_empty_project_says_how_to_start(self):
+        html = self.client.get(f"/ui/projects/{self.project_id}").text
+        self.assertIn("Dự án chưa có tệp nào", html)
+        self.assertNotIn("data-kind-filter", html)
+
+    def test_documents_open_in_the_main_panel(self):
+        document = upload(self.client, self.project_id)
+        html = self.client.get(f"/ui/projects/{self.project_id}").text
+        self.assertIn(f'href="/ui/documents/{document["id"]}" title="paper.txt" data-open-in-main', html)
+        detail = self.client.get(f"/ui/documents/{document['id']}").text
+        # The breadcrumb back to the project overview also stays in place.
+        self.assertIn(f'href="/ui/projects/{self.project_id}" data-open-in-main', detail)
+
+
 class PreviewAndStreamingTests(DocumentTestCase):
     """Images/audio/video play on the page; large files are streamed in ranges."""
 

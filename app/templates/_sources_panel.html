@@ -1,7 +1,6 @@
 <aside class="sources-panel" id="sources-panel" aria-label="Nguồn tài liệu của dự án">
   <div class="sources-head">
     <h2 class="side-title">Nguồn tài liệu</h2>
-    <span class="muted small-text">{{ documents|length }}</span>
   </div>
 
   <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row" id="upload-form" data-draft-key="upload:{{ project.id }}" data-draft-scope="upload-advanced-fields" data-draft-clear-on-submit>
@@ -39,44 +38,75 @@
     </ul>
   </details>
 
-  <nav class="source-list" aria-label="Danh sách tài liệu">
-    {% for doc in documents %}
-    {% set kind = doc|file_kind %}
-    <div class="source-item {{ doc.status }}{% if active_document_id and doc.id == active_document_id %} active{% endif %}">
-      {% if doc.status == 'ready' and kind.extractable %}
-      <input type="checkbox" class="source-check" form="ai-form" name="document_ids" value="{{ doc.id }}" checked title="Dùng khi hỏi AI" aria-label="Dùng {{ doc.original_name }} khi hỏi AI">
-      {% else %}
-      {# Images, audio, video and zips have no text for the AI to read. #}
-      <span class="source-check-spacer" aria-hidden="true"></span>
-      {% endif %}
-      <span class="source-kind kind-{{ kind.name }}" title="{{ kind.label }}">{{ icon(kind.icon, 15) }}</span>
-      {% if doc.status == 'ready' %}
-      <a class="source-main" href="/ui/documents/{{ doc.id }}" title="{{ doc.original_name }}">
-      {% else %}
-      <span class="source-main" title="{{ doc.original_name }}">
-      {% endif %}
-        <span class="source-name">{{ doc.original_name }}</span>
-        <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ kind.label }} · {{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
-      {% if doc.status == 'ready' %}</a>{% else %}</span>{% endif %}
-      {% if doc.status == 'ready' %}
-      <a class="source-action source-view" href="/ui/documents/{{ doc.id }}" title="Mở tài liệu chi tiết" aria-label="Mở {{ doc.original_name }} ở trang chi tiết">{{ icon('eye', 14) }}</a>
-      {% endif %}
-      {% if doc.status == 'deleting' %}
-      <a class="source-action source-delete" href="/ui/documents/{{ doc.id }}/delete" data-confirm-delete title="Thử xóa lại" aria-label="Thử xóa lại {{ doc.original_name }}">{{ icon('refresh', 13) }}</a>
-      {% elif doc.status != 'pending' %}
-      <a class="source-action source-delete" href="/ui/documents/{{ doc.id }}/delete" data-confirm-delete title="Xóa tài liệu" aria-label="Xóa {{ doc.original_name }}">{{ icon('trash', 13) }}</a>
-      {% endif %}
-    </div>
-    {% else %}
-    <p class="side-empty">Chưa có tài liệu nào.<br>Tải lên ở khung phía trên.</p>
-    {% endfor %}
-  </nav>
+  <form class="source-filter" id="source-filter" method="get" action="{{ request.url.path }}" role="search" data-list-url="/ui/projects/{{ project.id }}">
+    <label class="source-search">
+      <span class="sr-only">Tìm tài liệu theo tên</span>
+      {{ icon('search', 14) }}
+      <input type="search" name="q" value="{{ source_q }}" placeholder="Tìm theo tên tệp…" maxlength="200" autocomplete="off">
+    </label>
+    <select name="kind" aria-label="Lọc theo loại tệp" class="source-kind-filter">
+      <option value="">Tất cả loại</option>
+      {% for k in source_kinds %}<option value="{{ k.name }}"{% if k.name == source_kind %} selected{% endif %}>{{ k.label }}</option>{% endfor %}
+    </select>
+    <noscript><button type="submit" class="btn ghost sm">Lọc</button></noscript>
+  </form>
 
-  {% if offset > 0 or documents|length == 20 %}
-  <nav class="pager compact" aria-label="Phân trang tài liệu">
-    {% if offset > 0 %}<a class="pager-btn" href="/ui/projects/{{ project.id }}?offset={{ [0, offset-20]|max }}">{{ icon('arrow-left', 13) }}</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 13) }}</span>{% endif %}
-    <span class="pager-info">Trang {{ (offset // 20) + 1 }}</span>
-    {% if documents|length == 20 %}<a class="pager-btn" href="/ui/projects/{{ project.id }}?offset={{ offset+20 }}">{{ icon('chevron-right', 13) }}</a>{% else %}<span class="pager-btn disabled">{{ icon('chevron-right', 13) }}</span>{% endif %}
-  </nav>
-  {% endif %}
+  {# Replaced as a whole by app.js while searching/filtering, so keep everything
+     that depends on the search inside this element. #}
+  <div class="source-results" id="source-results">
+    {% set filtered = source_q or source_kind %}
+    <p class="source-results-head">
+      {% if filtered %}
+      <span>{{ documents|length }}{% if documents|length == 20 %}+{% endif %} kết quả{% if source_q %} cho “{{ source_q }}”{% endif %}</span>
+      <a href="{{ request.url.path }}" class="source-clear" data-source-clear>Xóa lọc</a>
+      {% else %}
+      <span>{{ documents|length }}{% if documents|length == 20 %}+{% endif %} tài liệu</span>
+      {% endif %}
+    </p>
+    <nav class="source-list" aria-label="Danh sách tài liệu">
+      {% for doc in documents %}
+      {% set kind = doc|file_kind %}
+      <div class="source-item {{ doc.status }}{% if active_document_id and doc.id == active_document_id %} active{% endif %}" data-document-id="{{ doc.id }}">
+        {% if doc.status == 'ready' and kind.extractable %}
+        <input type="checkbox" class="source-check" form="ai-form" name="document_ids" value="{{ doc.id }}" checked title="Dùng khi hỏi AI" aria-label="Dùng {{ doc.original_name }} khi hỏi AI">
+        {% else %}
+        {# Images, audio, video and zips have no text for the AI to read. #}
+        <span class="source-check-spacer" aria-hidden="true"></span>
+        {% endif %}
+        <span class="source-kind kind-{{ kind.name }}" title="{{ kind.label }}">{{ icon(kind.icon, 15) }}</span>
+        {% if doc.status == 'ready' %}
+        <a class="source-main" href="/ui/documents/{{ doc.id }}{% if source_qs %}?{{ source_qs }}{% endif %}" title="{{ doc.original_name }}" data-open-in-main>
+        {% else %}
+        <span class="source-main" title="{{ doc.original_name }}">
+        {% endif %}
+          <span class="source-name">{{ doc.original_name }}</span>
+          <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ kind.label }} · {{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
+        {% if doc.status == 'ready' %}</a>{% else %}</span>{% endif %}
+        {% if doc.status == 'ready' %}
+        <a class="source-action source-view" href="/ui/documents/{{ doc.id }}" target="_blank" rel="noopener" title="Mở ở tab mới" aria-label="Mở {{ doc.original_name }} ở tab mới">{{ icon('eye', 14) }}</a>
+        {% endif %}
+        {% if doc.status == 'deleting' %}
+        <a class="source-action source-delete" href="/ui/documents/{{ doc.id }}/delete" data-confirm-delete title="Thử xóa lại" aria-label="Thử xóa lại {{ doc.original_name }}">{{ icon('refresh', 13) }}</a>
+        {% elif doc.status != 'pending' %}
+        <a class="source-action source-delete" href="/ui/documents/{{ doc.id }}/delete" data-confirm-delete title="Xóa tài liệu" aria-label="Xóa {{ doc.original_name }}">{{ icon('trash', 13) }}</a>
+        {% endif %}
+      </div>
+      {% else %}
+      {% if filtered %}
+      <p class="side-empty">Không có tài liệu nào khớp.<br><a href="{{ request.url.path }}" data-source-clear>Xóa bộ lọc</a></p>
+      {% else %}
+      <p class="side-empty">Chưa có tài liệu nào.<br>Tải lên ở khung phía trên.</p>
+      {% endif %}
+      {% endfor %}
+    </nav>
+
+    {% if offset > 0 or documents|length == 20 %}
+    {% set base = request.url.path ~ '?' ~ (source_filter_qs ~ '&' if source_filter_qs else '') %}
+    <nav class="pager compact" aria-label="Phân trang tài liệu">
+      {% if offset > 0 %}<a class="pager-btn" href="{{ base }}offset={{ [0, offset-20]|max }}" data-source-page>{{ icon('arrow-left', 13) }}</a>{% else %}<span class="pager-btn disabled">{{ icon('arrow-left', 13) }}</span>{% endif %}
+      <span class="pager-info">Trang {{ (offset // 20) + 1 }}</span>
+      {% if documents|length == 20 %}<a class="pager-btn" href="{{ base }}offset={{ offset+20 }}" data-source-page>{{ icon('chevron-right', 13) }}</a>{% else %}<span class="pager-btn disabled">{{ icon('chevron-right', 13) }}</span>{% endif %}
+    </nav>
+    {% endif %}
+  </div>
 </aside>

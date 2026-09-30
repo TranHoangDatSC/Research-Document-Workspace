@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ document.original_name }} · Research Document Workspace{% endblock %}
-{% block crumbs %}<a href="/">Dự án</a>{{ icon('chevron-right', 14) }}<a href="/ui/projects/{{ project.id }}">{{ project.name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">{{ document.original_name }}</span>{% endblock %}
+{% block crumbs %}<a href="/">Dự án</a>{{ icon('chevron-right', 14) }}<a href="/ui/projects/{{ project.id }}{% if source_qs %}?{{ source_qs }}{% endif %}" data-open-in-main>{{ project.name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">{{ document.original_name }}</span>{% endblock %}
 {% block topbar_actions %}<button type="button" class="icon-btn" id="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="Ẩn/hiện bảng lưu trữ">{{ icon('panel-right', 18) }}</button>{% endblock %}
 
 {% block sources %}

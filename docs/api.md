@@ -31,6 +31,10 @@ xem `tests/integration/_auth_helper.py`). Chi tiết tài khoản/role:
 | POST | `/documents/{document_id}/extract` | Trích xuất văn bản, lưu vào MongoDB, trả metadata đầy đủ |
 | POST | `/projects/{project_id}/ask` | Hỏi đáp AI trên văn bản đã trích xuất trong project (`{"question"}`) |
 
+`GET /projects/{project_id}/documents` nhận thêm `q` (tên tệp chứa chuỗi, không
+phân biệt hoa thường; `%`/`_` được hiểu đúng nghĩa đen) và `kind` (`document`,
+`presentation`, `data`, `image`, `audio`, `video`, `archive`; sai tên thì 422).
+
 Upload multipart: `file` (bắt buộc), `tags`, `authors` (phân cách bằng dấu phẩy),
 `custom_metadata` (chuỗi JSON object, mặc định `{}`).
 
@@ -62,7 +66,7 @@ môi trường `MAX_UPLOAD_MB_<NHÓM>`, ví dụ `MAX_UPLOAD_MB_VIDEO=1000`.
 | --- | --- | --- | --- | --- |
 | Tài liệu | `.txt .md .pdf .docx` | 50 MiB | Có | — |
 | Trình chiếu | `.pptx` | 100 MiB | Có (chữ, bảng, ghi chú từng slide) | — |
-| Dữ liệu | `.csv .json` | 50 MiB | Có (như văn bản) | — |
+| Dữ liệu | `.csv .json .xlsx` | 50 MiB | Có (.xlsx: từng sheet, mỗi hàng một dòng, giá trị đã tính của công thức) | — |
 | Hình ảnh | `.png .jpg .jpeg .gif .webp` | 25 MiB | Không | Ảnh |
 | Âm thanh | `.mp3 .wav .m4a .ogg` | 100 MiB | Không | Trình phát |
 | Video | `.mp4 .webm .mov` | 500 MiB | Không | Trình phát, tua được |
@@ -88,7 +92,8 @@ văn bản (`app/extractors.py`, hàm thuần không I/O) rồi ghi đè trườ
 
 `extracted_text` sau khi trích xuất: `{"text", "method", "character_count",
 "word_count", "truncated", "extracted_at"}`. `method` là `plain_text` (.txt),
-`pdf_text` (.pdf), `docx_text` (.docx) hoặc `pptx_text` (.pptx; mỗi slide mở
+`pdf_text` (.pdf), `docx_text` (.docx), `xlsx_text` (.xlsx; mỗi sheet mở đầu
+bằng `--- Sheet: tên ---`) hoặc `pptx_text` (.pptx; mỗi slide mở
 đầu bằng `--- Slide N ---`, ghi chú người trình bày có tiền tố `Ghi chú:`).
 `.md/.csv/.json` cũng là `plain_text`. Ảnh, âm thanh, video, zip trả 422 ngay,
 không tải file từ MinIO. Văn bản lưu tối đa 200 000 ký tự;

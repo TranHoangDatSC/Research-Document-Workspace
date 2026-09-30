@@ -129,15 +129,21 @@
   syncSidebar();
 
   // ----- inspector toggle -----
-  var inspectorBtn = document.getElementById('toggle-inspector');
-  if (inspectorBtn) {
-    if (stored('rdw.inspector') === 'hidden') { shell.classList.add('inspector-hidden'); inspectorBtn.setAttribute('aria-expanded', 'false'); }
-    inspectorBtn.addEventListener('click', function () {
-      var hidden = shell.classList.toggle('inspector-hidden');
-      inspectorBtn.setAttribute('aria-expanded', String(!hidden));
-      stored('rdw.inspector', hidden ? 'hidden' : 'shown');
-    });
+  // Delegated, and re-synced by initInspectorToggle(): the button is replaced
+  // whenever a document opens in the main panel (see openInMain).
+  if (stored('rdw.inspector') === 'hidden') shell.classList.add('inspector-hidden');
+  function initInspectorToggle() {
+    var btn = document.getElementById('toggle-inspector');
+    if (btn) btn.setAttribute('aria-expanded', String(!shell.classList.contains('inspector-hidden')));
   }
+  initInspectorToggle();
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('#toggle-inspector');
+    if (!btn) return;
+    var hidden = shell.classList.toggle('inspector-hidden');
+    btn.setAttribute('aria-expanded', String(!hidden));
+    stored('rdw.inspector', hidden ? 'hidden' : 'shown');
+  });
 
   // ----- user menu dropdown (topbar) -----
   // CSS :focus-within already opens this without JS (click/Tab into the
@@ -326,8 +332,10 @@
   }
 
   // ----- document tabs (all panes stay visible without JS) -----
-  var tabs = document.getElementById('doc-tabs');
-  if (tabs) {
+  // A function, not run-once: a document opened in the main panel brings new tabs.
+  function initDocTabs(root) {
+    var tabs = root.querySelector('#doc-tabs');
+    if (!tabs) return;
     var buttons = Array.prototype.slice.call(tabs.querySelectorAll('[role="tab"]'));
     // The open tab lives in the URL hash (#info / #extract / #json — "tab-" id
     // without the prefix, so no element matches and the page doesn't jump), so a
@@ -340,7 +348,7 @@
         b.tabIndex = on ? 0 : -1;
         document.getElementById(b.getAttribute('aria-controls')).hidden = !on;
       });
-      if (remember && window.history && history.replaceState) history.replaceState(null, '', '#' + tabName(btn));
+      if (remember && window.history && history.replaceState) history.replaceState(history.state, '', '#' + tabName(btn));
     };
     tabs.hidden = false;
     buttons.forEach(function (b, i) {
@@ -354,49 +362,50 @@
     });
     var fromHash = buttons.filter(function (b) { return '#' + tabName(b) === location.hash; })[0];
     select(fromHash || buttons[0], false);
+  }
+  initDocTabs(document);
 
-    // "Trích xuất văn bản": run it in place and swap in the refreshed tab
-    // content, instead of a full page load. Without fetch, the form posts
-    // normally and the redirect's #extract hash still reopens this tab.
-    if (window.fetch && window.DOMParser) {
-      document.addEventListener('submit', function (e) {
-        var form = e.target.closest('form[data-inline-extract]');
-        if (!form) return;
-        e.preventDefault();
-        var button = form.querySelector('button');
-        var label = button.querySelector('span');
-        var pane = form.closest('[role="tabpanel"]');
-        var errorBox = pane.querySelector('.extract-error');
-        button.disabled = true;
-        label.textContent = 'Đang trích xuất…';
-        if (errorBox) errorBox.hidden = true;
-        fetch(form.action, { method: 'POST', headers: { Accept: 'text/html' } })
-          .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
-          .then(function (result) {
-            var page = new DOMParser().parseFromString(result.html, 'text/html');
-            if (!result.ok) {
-              // Error page: its message is the paragraph right under the heading.
-              var message = page.querySelector('.center-card h1 + p');
-              throw new Error(message ? message.textContent : 'Trích xuất thất bại, thử lại sau.');
-            }
-            var freshPane = page.getElementById(pane.id);
-            if (freshPane) pane.innerHTML = freshPane.innerHTML;
-            // The MongoDB JSON tab shows the same record — keep it in sync too.
-            var freshJson = page.getElementById('json-source');
-            var json = document.getElementById('json-source');
-            if (freshJson && json) json.textContent = freshJson.textContent;
-          })
-          .catch(function (err) {
-            button.disabled = false;
-            label.textContent = 'Thử trích xuất lại';
-            if (errorBox) {
-              // TypeError = fetch itself failed (network), its message is browser English.
-              errorBox.textContent = (err instanceof TypeError || !err.message) ? 'Không kết nối được máy chủ, thử lại sau.' : err.message;
-              errorBox.hidden = false;
-            }
-          });
-      });
-    }
+  // "Trích xuất văn bản": run it in place and swap in the refreshed tab
+  // content, instead of a full page load. Without fetch, the form posts
+  // normally and the redirect's #extract hash still reopens this tab.
+  if (window.fetch && window.DOMParser) {
+    document.addEventListener('submit', function (e) {
+      var form = e.target.closest('form[data-inline-extract]');
+      if (!form) return;
+      e.preventDefault();
+      var button = form.querySelector('button');
+      var label = button.querySelector('span');
+      var pane = form.closest('[role="tabpanel"]');
+      var errorBox = pane.querySelector('.extract-error');
+      button.disabled = true;
+      label.textContent = 'Đang trích xuất…';
+      if (errorBox) errorBox.hidden = true;
+      fetch(form.action, { method: 'POST', headers: { Accept: 'text/html' } })
+        .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
+        .then(function (result) {
+          var page = new DOMParser().parseFromString(result.html, 'text/html');
+          if (!result.ok) {
+            // Error page: its message is the paragraph right under the heading.
+            var message = page.querySelector('.center-card h1 + p');
+            throw new Error(message ? message.textContent : 'Trích xuất thất bại, thử lại sau.');
+          }
+          var freshPane = page.getElementById(pane.id);
+          if (freshPane) pane.innerHTML = freshPane.innerHTML;
+          // The MongoDB JSON tab shows the same record — keep it in sync too.
+          var freshJson = page.getElementById('json-source');
+          var json = document.getElementById('json-source');
+          if (freshJson && json) json.textContent = freshJson.textContent;
+        })
+        .catch(function (err) {
+          button.disabled = false;
+          label.textContent = 'Thử trích xuất lại';
+          if (errorBox) {
+            // TypeError = fetch itself failed (network), its message is browser English.
+            errorBox.textContent = (err instanceof TypeError || !err.message) ? 'Không kết nối được máy chủ, thử lại sau.' : err.message;
+            errorBox.hidden = false;
+          }
+        });
+    });
   }
 
   // ----- AI chat: floating action button + slide-over panel -----
@@ -966,20 +975,141 @@
   Array.prototype.forEach.call(document.querySelectorAll('form[data-draft-key]'), setupDraft);
   Array.prototype.forEach.call(document.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
 
-  // ----- document quick-look modal: opens a compact <dialog> instead of navigating away -----
-  var docModal = document.getElementById('doc-modal');
-  if (docModal && modalsSupported && typeof docModal.showModal === 'function') {
-    var docModalBody = document.getElementById('doc-modal-body');
-    var docModalFullLink = document.getElementById('doc-modal-full-link');
-    wireModalClose(docModal, '[data-doc-modal-close]');
+  // ----- open documents in the main panel (NotebookLM-style) -----
+  // A document picked in the sources sidebar replaces only the middle of the
+  // page: the sidebar (search, scroll position, AI checkboxes) and the AI chat
+  // stay put. The URL still changes (pushState), so Back/Forward, reload and
+  // "open in new tab" all work; without JS the links are ordinary pages.
+  var mainEl = document.getElementById('main');
+  var sourceFilter = document.getElementById('source-filter');
+  var canNavigateInPlace = !!(mainEl && document.getElementById('sources-panel') && window.fetch && window.DOMParser && window.history && history.pushState);
 
+  function markActiveSource(documentId) {
+    Array.prototype.forEach.call(document.querySelectorAll('#sources-panel .source-item'), function (item) {
+      item.classList.toggle('active', !!documentId && item.getAttribute('data-document-id') === documentId);
+    });
+  }
+
+  function openInMain(url, push) {
+    mainEl.classList.add('loading');
+    return fetch(url, { headers: { Accept: 'text/html' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        var page = new DOMParser().parseFromString(html, 'text/html');
+        var freshMain = page.getElementById('main');
+        if (!freshMain) throw new Error('unexpected page');
+        document.title = page.title;
+        mainEl.innerHTML = freshMain.innerHTML;
+        ['.crumbs', '#page-actions'].forEach(function (sel) {
+          var fresh = page.querySelector(sel);
+          var current = document.querySelector(sel);
+          if (fresh && current) current.innerHTML = fresh.innerHTML;
+        });
+        // The storage inspector only exists on document pages.
+        var body = mainEl.parentNode;
+        var oldInspector = body.querySelector('.inspector');
+        if (oldInspector) oldInspector.remove();
+        var freshInspector = page.querySelector('.body > .inspector');
+        if (freshInspector) body.appendChild(document.importNode(freshInspector, true));
+        var freshActive = page.querySelector('#sources-panel .source-item.active');
+        markActiveSource(freshActive ? freshActive.getAttribute('data-document-id') : null);
+        if (push) history.pushState({ rdwMain: true }, '', url);
+        mainEl.scrollTop = 0;
+        initDocTabs(mainEl);
+        initInspectorToggle();
+      })
+      .catch(function () {
+        // Anything unexpected (deleted document, server error, logged out):
+        // fall back to a normal page load, which shows the proper page.
+        window.location.href = url;
+      })
+      .then(function () { mainEl.classList.remove('loading'); });
+  }
+
+  if (canNavigateInPlace) {
+    history.replaceState({ rdwMain: true }, '', location.href);
     document.addEventListener('click', function (e) {
-      var link = e.target.closest('a.source-main[href^="/ui/documents/"]');
-      if (!link) return;
+      var link = e.target.closest('a[data-open-in-main]');
+      if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       e.preventDefault();
-      var url = link.getAttribute('href');
-      if (docModalFullLink) docModalFullLink.href = url;
-      fetchAndShowModal(docModal, docModalBody, url, ['.doc-head', '#pane-info']);
+      shell.classList.remove('sidebar-open');
+      openInMain(link.href, true);
+    });
+    window.addEventListener('popstate', function (e) {
+      if (e.state && e.state.rdwMain) openInMain(location.href, false);
+    });
+  }
+
+  // ----- sources sidebar: search + kind filter, applied as you type -----
+  // Server-side (it must cover every page, not just the 20 on screen); the
+  // results block is swapped in place and the URL keeps ?q=&kind= so a reload
+  // or a document link keeps the same list. Without JS the form just submits.
+  if (sourceFilter && window.fetch && window.DOMParser) {
+    var results = document.getElementById('source-results');
+    var searchInput = sourceFilter.querySelector('input[name="q"]');
+    var kindSelect = sourceFilter.querySelector('select[name="kind"]');
+    var listRequest = 0;
+
+    var refreshSources = function (offset) {
+      var params = new URLSearchParams();
+      if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
+      if (kindSelect.value) params.set('kind', kindSelect.value);
+      if (offset && offset !== '0') params.set('offset', offset);
+      var qs = params.toString();
+      // Unchecked "use with AI" boxes survive the list being re-rendered.
+      var unchecked = Array.prototype.map.call(results.querySelectorAll('.source-check:not(:checked)'), function (c) { return c.value; });
+      var activeItem = results.querySelector('.source-item.active');
+      var activeId = activeItem && activeItem.getAttribute('data-document-id');
+      var mine = ++listRequest;
+      results.classList.add('loading');
+      // The project page renders the same list and is cheaper than a document page.
+      fetch(sourceFilter.getAttribute('data-list-url') + (qs ? '?' + qs : ''), { headers: { Accept: 'text/html' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (html) {
+          if (mine !== listRequest) return;  // a newer keystroke won
+          var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('source-results');
+          if (!fresh) return;
+          results.innerHTML = fresh.innerHTML;
+          Array.prototype.forEach.call(results.querySelectorAll('.source-check'), function (c) {
+            if (unchecked.indexOf(c.value) !== -1) c.checked = false;
+          });
+          markActiveSource(activeId);
+          history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+          Array.prototype.forEach.call(document.querySelectorAll('[data-kind-filter]'), function (card) {
+            card.classList.toggle('selected', card.getAttribute('data-kind-filter') === kindSelect.value);
+          });
+        })
+        .catch(function () { if (mine === listRequest) sourceFilter.submit(); })
+        .then(function () { if (mine === listRequest) results.classList.remove('loading'); });
+    };
+
+    var typingTimer = null;
+    searchInput.addEventListener('input', function () {
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(function () { refreshSources(0); }, 250);
+    });
+    kindSelect.addEventListener('change', function () { refreshSources(0); });
+    sourceFilter.addEventListener('submit', function (e) { e.preventDefault(); clearTimeout(typingTimer); refreshSources(0); });
+    document.addEventListener('click', function (e) {
+      var page = e.target.closest('a[data-source-page]');
+      var clear = e.target.closest('a[data-source-clear]');
+      var kindCard = e.target.closest('a[data-kind-filter]');
+      if (!page && !clear && !kindCard) return;
+      e.preventDefault();
+      if (page) {
+        refreshSources(new URL(page.href).searchParams.get('offset') || 0);
+      } else if (clear) {
+        searchInput.value = '';
+        kindSelect.value = '';
+        refreshSources(0);
+      } else {
+        var kind = kindCard.getAttribute('data-kind-filter');
+        kindSelect.value = kindSelect.value === kind ? '' : kind;  // click again to un-filter
+        refreshSources(0);
+      }
     });
   }
 
@@ -1045,15 +1175,16 @@
     }
   }
 
-  // ----- copy JSON -----
-  var copy = document.getElementById('copy-json');
-  if (copy && navigator.clipboard) copy.addEventListener('click', function () {
-    var text = document.getElementById(copy.getAttribute('data-target')).textContent;
+  // ----- copy JSON (delegated: the button arrives with each opened document) -----
+  document.addEventListener('click', function (e) {
+    var copy = e.target.closest('#copy-json');
+    if (!copy) return;
     var span = copy.querySelector('span');
+    var text = document.getElementById(copy.getAttribute('data-target')).textContent;
+    if (!navigator.clipboard) { span.textContent = 'Trình duyệt chặn sao chép'; return; }
     navigator.clipboard.writeText(text).then(function () {
       span.textContent = 'Đã sao chép';
       setTimeout(function () { span.textContent = 'Sao chép'; }, 1600);
     });
   });
-  else if (copy) copy.hidden = true;
 }());

@@ -55,7 +55,7 @@
       <button type="button" class="icon-btn" id="toggle-sidebar" aria-controls="sidebar" aria-expanded="true" title="Ẩn/hiện thanh bên">{{ icon('panel-left', 18) }}</button>
       <nav class="crumbs" aria-label="Vị trí hiện tại">{% block crumbs %}<span class="crumb-current">Dự án</span>{% endblock %}</nav>
       <div class="topbar-actions">
-        {% block topbar_actions %}{% endblock %}
+        <div class="page-actions" id="page-actions">{% block topbar_actions %}{% endblock %}</div>
         {% if current_user %}
         <div class="user-menu">
           <button type="button" class="user-menu-btn" id="user-menu-btn" aria-haspopup="true" aria-expanded="false" aria-controls="user-menu-panel">
@@ -83,16 +83,6 @@
   {% block ai_chat %}{% endblock %}
 </div>
 
-<dialog class="doc-modal" id="doc-modal" aria-label="Xem nhanh tài liệu">
-  <div class="doc-modal-inner">
-    <button type="button" class="icon-btn doc-modal-close" data-doc-modal-close aria-label="Đóng">{{ icon('x', 16) }}</button>
-    <div class="doc-modal-body" id="doc-modal-body"></div>
-    <div class="doc-modal-foot">
-      <a class="btn ghost sm" id="doc-modal-full-link" href="#">{{ icon('panel-right', 13) }}Xem đầy đủ</a>
-      <button type="button" class="btn secondary sm" data-doc-modal-close>Đóng</button>
-    </div>
-  </div>
-</dialog>
 
 <dialog class="doc-modal confirm-modal" id="confirm-modal" aria-label="Xác nhận xóa">
   <div class="doc-modal-inner">

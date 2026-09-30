@@ -46,13 +46,40 @@ def mark_failed(document_id):
         )
 
 
-def list_documents(project_id, limit, offset):
+def _escape_like(text):
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_documents(project_id, limit, offset, query=None, extensions=None):
+    """`query`: case-insensitive substring of the file name (wildcards in it are
+    literal). `extensions`: only files ending in one of these, e.g. [".png", ".jpg"]."""
+    where, params = ["project_id = %s"], [project_id]
+    if query:
+        where.append("original_name ILIKE %s ESCAPE '\\'")
+        params.append(f"%{_escape_like(query)}%")
+    if extensions:
+        where.append("object_name LIKE ANY(%s)")
+        params.append([f"%{ext}" for ext in extensions])
     with postgres_connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
-                f"SELECT {FIELDS} FROM documents WHERE project_id = %s "
+                f"SELECT {FIELDS} FROM documents WHERE {' AND '.join(where)} "
                 "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
-                (project_id, limit, offset),
+                (*params, limit, offset),
+            )
+            return cursor.fetchall()
+
+
+def extension_totals(project_id):
+    """[{"extension": ".pdf", "count": 3, "size_bytes": 1234}] over the whole
+    project (every page), ready documents only — for the project overview."""
+    with postgres_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT substring(object_name from '\\.[^./]*$') AS extension, "
+                "count(*) AS count, coalesce(sum(size_bytes), 0) AS size_bytes "
+                "FROM documents WHERE project_id = %s AND status = 'ready' GROUP BY 1",
+                (project_id,),
             )
             return cursor.fetchall()
 

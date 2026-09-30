@@ -122,12 +122,28 @@ class FakeBackend:
         if row and row["status"] == "pending":
             row["status"] = "failed"
 
-    def list_documents(self, project_id, limit, offset):
+    def list_documents(self, project_id, limit, offset, query=None, extensions=None):
         rows = sorted(
-            (r for r in self.documents.values() if r["project_id"] == project_id),
+            (
+                r for r in self.documents.values()
+                if r["project_id"] == project_id
+                and (not query or query.lower() in r["original_name"].lower())
+                and (not extensions or r["object_name"].endswith(tuple(extensions)))
+            ),
             key=lambda r: r["created_at"], reverse=True,
         )
         return [dict(r) for r in rows[offset:offset + limit]]
+
+    def extension_totals(self, project_id):
+        totals = {}
+        for r in self.documents.values():
+            if r["project_id"] != project_id or r["status"] != "ready":
+                continue
+            ext = r["object_name"][r["object_name"].rfind("."):]
+            entry = totals.setdefault(ext, {"extension": ext, "count": 0, "size_bytes": 0})
+            entry["count"] += 1
+            entry["size_bytes"] += r["size_bytes"]
+        return list(totals.values())
 
     def list_all_documents(self, project_id):
         return [dict(r) for r in self.documents.values() if r["project_id"] == project_id]
@@ -273,7 +289,7 @@ class FakeBackend:
             documents_repo: {
                 name: getattr(self, name) for name in (
                     "project_exists", "get_document", "create_pending", "mark_ready", "mark_failed",
-                    "list_documents", "list_all_documents", "begin_delete", "finish_delete",
+                    "list_documents", "list_all_documents", "extension_totals", "begin_delete", "finish_delete",
                     "insert_details", "get_details", "delete_details", "update_extracted_text", "update_details",
                 )
             },

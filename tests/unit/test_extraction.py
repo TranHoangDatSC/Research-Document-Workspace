@@ -8,6 +8,7 @@ from unittest.mock import patch
 from uuid import UUID
 
 from docx import Document
+from openpyxl import Workbook
 from pptx import Presentation
 from pptx.util import Inches
 from pypdf import PdfWriter
@@ -193,6 +194,28 @@ class PresentationAndDataExtractionTests(ExtractorTestCase):
 
     def test_corrupt_pptx(self):
         self.assert_extraction_error("corrupt_file", b"not a pptx", ".pptx")
+
+    def test_xlsx_sheets_rows_and_computed_values(self):
+        workbook = Workbook()
+        first = workbook.active
+        first.title = "Kết quả"
+        first.append(["Model", "MAPE", None])
+        first.append(["LSTM", 7.2])
+        first.append([])                 # blank row skipped
+        first.append(["Tổng", "=1+1"])   # formula: no cached value when written by openpyxl
+        workbook.create_sheet("Trống")    # empty sheet skipped
+        workbook.create_sheet("Ghi chú").append(["Nguồn: khảo sát 2021"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        result = extract_text(buffer.getvalue(), ".xlsx")
+        self.assertEqual(result.method, "xlsx_text")
+        self.assertEqual(
+            result.text,
+            "--- Sheet: Kết quả ---\nModel\tMAPE\nLSTM\t7.2\nTổng\n\n--- Sheet: Ghi chú ---\nNguồn: khảo sát 2021",
+        )
+
+    def test_corrupt_xlsx(self):
+        self.assert_extraction_error("corrupt_file", b"not a workbook", ".xlsx")
 
     def test_markdown_csv_json_read_as_text(self):
         for extension, content in ((".md", "# Tiêu đề\n- ý một"), (".csv", "model,mape\nlstm,7.2"), (".json", '{"model": "lstm"}')):

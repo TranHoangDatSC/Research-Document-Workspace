@@ -4,6 +4,7 @@ import io
 from dataclasses import dataclass
 
 from docx import Document
+from openpyxl import load_workbook
 from pptx import Presentation
 from pypdf import PdfReader
 
@@ -97,6 +98,32 @@ def _extract_pptx(content: bytes) -> tuple[str, str]:
     return text, "pptx_text"
 
 
+def _extract_xlsx(content: bytes) -> tuple[str, str]:
+    """Sheet by sheet, one tab-separated line per non-empty row, cached cell
+    values (not formulas). read_only streams rows instead of building every
+    cell object, which matters for big sheets."""
+    try:
+        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        try:
+            sheets = []
+            for sheet in workbook.worksheets:
+                lines = []
+                for row in sheet.iter_rows(values_only=True):
+                    cells = ["" if value is None else str(value) for value in row]
+                    while cells and cells[-1] == "":
+                        cells.pop()
+                    if cells:
+                        lines.append("\t".join(cells))
+                if lines:
+                    sheets.append(f"--- Sheet: {sheet.title} ---\n" + "\n".join(lines))
+        finally:
+            workbook.close()
+        text = "\n\n".join(sheets)
+    except Exception:
+        raise ExtractionError("corrupt_file") from None
+    return text, "xlsx_text"
+
+
 _EXTRACTORS = {
     ".txt": _extract_txt,
     ".md": _extract_txt,
@@ -105,6 +132,7 @@ _EXTRACTORS = {
     ".pdf": _extract_pdf,
     ".docx": _extract_docx,
     ".pptx": _extract_pptx,
+    ".xlsx": _extract_xlsx,
 }
 
 
@@ -131,7 +159,7 @@ def extract_text(
     extension: str,
     max_characters: int = MAX_EXTRACTED_CHARACTERS,
 ) -> ExtractionResult:
-    """Extract text from .txt/.md/.csv/.json/.pdf/.docx/.pptx bytes. Counts describe the saved text."""
+    """Extract text from .txt/.md/.csv/.json/.pdf/.docx/.pptx/.xlsx bytes. Counts describe the saved text."""
     if not isinstance(content, bytes):
         raise TypeError("content must be bytes")
 

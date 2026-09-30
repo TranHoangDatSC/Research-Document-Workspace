@@ -24,8 +24,10 @@ def list_documents(
     project_id: UUID,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    q: str = Query(default="", max_length=200, description="File name contains (case-insensitive)"),
+    kind: str = Query(default="", description="document, presentation, data, image, audio, video, archive"),
 ):
-    return service.list_documents(project_id, limit, offset)
+    return service.list_documents(project_id, limit, offset, q, kind or None)
 
 
 @router.get("/documents/{document_id}")

@@ -48,6 +48,7 @@ EXTENSIONS = {
     ".pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "presentation"),
     ".csv": ("text/csv", "data"),
     ".json": ("application/json", "data"),
+    ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "data"),
     ".png": ("image/png", "image"),
     ".jpg": ("image/jpeg", "image"),
     ".jpeg": ("image/jpeg", "image"),

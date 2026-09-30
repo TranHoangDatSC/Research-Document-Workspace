@@ -21,16 +21,37 @@
   </div>
 </div>
 
-<section class="stat-row" aria-label="Thống kê trang hiện tại">
-  <div class="stat-card"><span class="stat-icon">{{ icon('file', 18) }}</span><div><strong>{{ documents|length }}</strong><small>tài liệu trong trang này</small></div></div>
-  <div class="stat-card"><span class="stat-icon">{{ icon('drive', 18) }}</span><div><strong>{{ documents|sum(attribute='size_bytes')|filesize }}</strong><small>dung lượng trong trang này</small></div></div>
-  <div class="stat-card"><span class="stat-icon">{{ icon('clock', 18) }}</span><div><strong>{{ project.created_at|dt }}</strong><small>ngày tạo dự án</small></div></div>
+{% set total_count = kind_totals|sum(attribute='count') %}
+{% set ai_count = kind_totals|selectattr('kind.extractable')|sum(attribute='count') %}
+<section class="stat-row" aria-label="Thống kê dự án">
+  <div class="stat-card"><span class="stat-icon">{{ icon('file', 18) }}</span><div><strong>{{ total_count }}</strong><small>tệp trong dự án</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('drive', 18) }}</span><div><strong>{{ kind_totals|sum(attribute='size_bytes')|filesize }}</strong><small>tổng dung lượng</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('sparkles', 18) }}</span><div><strong>{{ ai_count }}</strong><small>tệp có văn bản cho AI</small></div></div>
 </section>
 
+{% if kind_totals %}
+<section class="card" aria-label="Tệp theo loại">
+  <div class="card-head"><h2>Theo loại</h2><span class="muted small-text">Bấm để lọc danh sách bên trái</span></div>
+  <div class="kind-grid">
+    {% for entry in kind_totals %}
+    <a class="kind-card{% if entry.kind.name == source_kind %} selected{% endif %}" href="?kind={{ entry.kind.name }}" data-kind-filter="{{ entry.kind.name }}">
+      <span class="source-kind kind-{{ entry.kind.name }}">{{ icon(entry.kind.icon, 18) }}</span>
+      <span><strong>{{ entry.kind.label }}</strong><small>{{ entry.count }} tệp · {{ entry.size_bytes|filesize }}</small></span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 <section class="card research-hint">
-  <span class="empty-icon">{{ icon('folder', 26) }}</span>
-  <p><strong>Chọn một tài liệu ở khung bên trái để xem chi tiết</strong></p>
-  <p class="muted small-text">Hoặc bấm nút trò chuyện AI ở góc dưới bên phải để hỏi đáp trên các tài liệu đã trích xuất trong dự án này.</p>
+  <span class="empty-icon">{{ icon('panel-left', 26) }}</span>
+  {% if total_count %}
+  <p><strong>Chọn một tệp ở danh sách bên trái — nội dung sẽ hiện ngay tại đây</strong></p>
+  <p class="muted small-text">Ảnh, âm thanh và video phát trực tiếp; tài liệu có văn bản xem được ở tab "Văn bản trích xuất". Nút AI ở góc dưới bên phải hỏi đáp trên các tệp có văn bản.</p>
+  {% else %}
+  <p><strong>Dự án chưa có tệp nào</strong></p>
+  <p class="muted small-text">Bấm "Chọn tệp" ở khung bên trái hoặc kéo thả tệp vào đó để bắt đầu.</p>
+  {% endif %}
 </section>
 {% endblock %}
 

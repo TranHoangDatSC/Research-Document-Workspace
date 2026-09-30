@@ -182,12 +182,38 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
     return {**row, **details}
 
 
-def list_documents(project_id, limit=20, offset=0):
+def list_documents(project_id, limit=20, offset=0, query=None, kind=None):
+    """`query` matches the file name; `kind` is a file_types kind name
+    ("image", "video", ...) — unknown kinds are 422, not silently ignored."""
     require_project(project_id)
+    extensions = None
+    if kind:
+        if kind not in file_types.KINDS:
+            raise HTTPException(422, "Unknown kind; use one of: " + ", ".join(file_types.KINDS))
+        extensions = [ext for ext, (_, k) in file_types.EXTENSIONS.items() if k == kind]
     try:
-        return repository.list_documents(project_id, limit, offset)
+        return repository.list_documents(project_id, limit, offset, (query or "").strip() or None, extensions)
     except psycopg.Error as exc:
         raise storage_error("list-documents", exc) from None
+
+
+def kind_totals(project_id):
+    """Per-kind count and size over the whole project, in file_types.KINDS
+    order, only kinds that are present."""
+    try:
+        rows = repository.extension_totals(project_id)
+    except psycopg.Error as exc:
+        raise storage_error("kind-totals", exc) from None
+    totals = {}
+    for row in rows:
+        # kind_of() wants a file name; a bare ".pdf" reads as a dotfile with no extension.
+        kind = file_types.kind_of("file" + (row["extension"] or ""))
+        if kind is None:
+            continue
+        entry = totals.setdefault(kind.name, {"kind": kind, "count": 0, "size_bytes": 0})
+        entry["count"] += row["count"]
+        entry["size_bytes"] += row["size_bytes"]
+    return [totals[name] for name in file_types.KINDS if name in totals]
 
 
 def get_document(document_id):
