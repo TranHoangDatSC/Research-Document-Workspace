@@ -121,7 +121,8 @@ def before():
     require(documents[0]['object_name'] != documents[1]['object_name'], 'Duplicate filenames use distinct objects')
     checks = [
         (str(uuid4()), 'missing.txt', b'hello', '{}', 404, 'Upload missing project'),
-        (pid, 'large.txt', b'x' * (10 * 1024 * 1024 + 1), '{}', 413, 'Oversized file'),
+        # Images have the smallest default limit (25 MiB, app/file_types.py).
+        (pid, 'large.png', b'x' * (25 * 1024 * 1024 + 1), '{}', 413, 'Oversized file'),
         (pid, 'blocked.exe', b'hello', '{}', 415, 'Unsupported extension'),
         (pid, 'empty.txt', b'', '{}', 422, 'Empty file'),
         (pid, 'bad-json.txt', b'hello', 'not-json', 422, 'Malformed metadata'),

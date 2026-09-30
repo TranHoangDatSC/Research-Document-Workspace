@@ -195,7 +195,21 @@
   var uploadForm = uploadInput && uploadInput.closest('form');
   var sourcesPanel = document.getElementById('sources-panel');
   if (uploadInput) {
-    var MAX = 10 * 1024 * 1024;
+    // Per-extension limits from app/file_types.py, e.g. {".mp4": 524288000}.
+    var limits = {};
+    try { limits = JSON.parse(uploadInput.getAttribute('data-limits') || '{}'); } catch (e) { /* server still checks */ }
+    var extensionOf = function (name) {
+      var dot = name.lastIndexOf('.');
+      return dot > 0 ? name.slice(dot).toLowerCase() : '';
+    };
+    // null = allowed; otherwise why not.
+    var problemWith = function (file) {
+      var limit = limits[extensionOf(file.name)];
+      if (!limit) return 'loại tệp không được hỗ trợ';
+      if (file.size > limit) return 'vượt giới hạn ' + Math.round(limit / 1048576) + ' MB cho loại tệp này';
+      if (file.size === 0) return 'tệp rỗng';
+      return null;
+    };
     var uploadGo = document.getElementById('upload-go');
     var pickLabel = document.getElementById('file-pick-label');
     var fileCard = document.getElementById('upload-file');
@@ -210,18 +224,18 @@
     // Picked file -> card with its full name and size; the upload button is
     // only enabled when there is something (valid) to upload.
     var describeFile = function (file) {
-      var tooBig = !!file && file.size > MAX;
+      var problem = file ? problemWith(file) : null;
       if (fileCard) {
         fileCard.hidden = !file;
-        fileCard.classList.toggle('too-big', tooBig);
+        fileCard.classList.toggle('too-big', !!problem);
       }
       if (file && fileName) {
         fileName.textContent = file.name;
         fileName.title = file.name;
-        fileMeta.textContent = formatSize(file.size) + (tooBig ? ' — vượt giới hạn 10 MB, chọn tệp khác' : ' — sẵn sàng tải lên');
+        fileMeta.textContent = formatSize(file.size) + (problem ? ' — ' + problem + ', chọn tệp khác' : ' — sẵn sàng tải lên');
       }
       if (pickLabel) pickLabel.textContent = file ? 'Đổi tệp' : 'Chọn tệp';
-      if (uploadGo) uploadGo.disabled = !file || tooBig;
+      if (uploadGo) uploadGo.disabled = !file || !!problem;
     };
     describeFile(uploadInput.files && uploadInput.files[0]);
     uploadInput.addEventListener('change', function () { describeFile(uploadInput.files && uploadInput.files[0]); });
@@ -229,6 +243,67 @@
       uploadInput.value = '';
       describeFile(null);
     });
+
+    // Upload with a progress bar: a large video takes minutes, and a plain form
+    // post gives no sign of life. Without XHR/FormData the form posts normally.
+    var progress = document.getElementById('upload-progress');
+    var uploading = false;
+    if (uploadForm && window.XMLHttpRequest && window.FormData && progress) {
+      var progressBar = progress.firstElementChild;
+      var finishWithError = function (message) {
+        uploading = false;
+        progress.hidden = true;
+        fileCard.classList.add('too-big');
+        fileMeta.textContent = message;
+        if (uploadGo) uploadGo.disabled = false;
+        if (fileClear) fileClear.disabled = false;
+      };
+      uploadForm.addEventListener('submit', function (e) {
+        var file = uploadInput.files && uploadInput.files[0];
+        if (!file || uploading) return;
+        e.preventDefault();
+        // The metadata editor only writes its rows back to the textarea in its
+        // own submit handler, which may run after this one — do it now.
+        Array.prototype.forEach.call(uploadForm.elements, function (el) {
+          if (el.kvValue) el.value = el.kvValue();
+        });
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', uploadForm.action);
+        xhr.upload.addEventListener('progress', function (ev) {
+          if (!ev.lengthComputable) return;
+          var pct = Math.floor(ev.loaded / ev.total * 100);
+          progressBar.style.width = pct + '%';
+          fileMeta.textContent = pct < 100
+            ? 'Đang tải lên ' + pct + '% (' + formatSize(ev.loaded) + ' / ' + formatSize(ev.total) + ')'
+            : 'Đang lưu vào kho…';
+        });
+        xhr.addEventListener('load', function () {
+          if (xhr.status < 400) {
+            uploading = false;
+            // The server redirected to the new document's page; go there.
+            window.location.href = xhr.responseURL || window.location.href;
+            return;
+          }
+          var page = new DOMParser().parseFromString(xhr.responseText, 'text/html');
+          var message = page.querySelector('.center-card h1 + p');
+          finishWithError('Tải lên thất bại: ' + (message ? message.textContent : 'lỗi ' + xhr.status));
+        });
+        xhr.addEventListener('error', function () { finishWithError('Mất kết nối khi tải lên, thử lại.'); });
+        uploading = true;
+        fileCard.classList.remove('too-big');
+        progressBar.style.width = '0';
+        progress.hidden = false;
+        fileMeta.textContent = 'Đang tải lên 0%';
+        if (uploadGo) uploadGo.disabled = true;
+        if (fileClear) fileClear.disabled = true;
+        xhr.send(new FormData(uploadForm));
+      });
+      window.addEventListener('beforeunload', function (e) {
+        if (!uploading) return;
+        e.preventDefault();
+        e.returnValue = '';  // browser shows its own "leave page?" prompt
+      });
+    }
 
     if (sourcesPanel && uploadForm) {
       ['dragenter', 'dragover'].forEach(function (t) {
@@ -244,7 +319,7 @@
         if (!file) return;
         uploadInput.files = e.dataTransfer.files;
         describeFile(file);
-        if (file.size > MAX) return;  // the card already explains why
+        if (problemWith(file)) return;  // the card already explains why
         if (uploadForm.requestSubmit) uploadForm.requestSubmit(); else uploadForm.submit();
       });
     }
@@ -254,25 +329,74 @@
   var tabs = document.getElementById('doc-tabs');
   if (tabs) {
     var buttons = Array.prototype.slice.call(tabs.querySelectorAll('[role="tab"]'));
-    var select = function (btn) {
+    // The open tab lives in the URL hash (#info / #extract / #json — "tab-" id
+    // without the prefix, so no element matches and the page doesn't jump), so a
+    // reload or a server redirect lands back on the same tab.
+    var tabName = function (btn) { return btn.id.replace(/^tab-/, ''); };
+    var select = function (btn, remember) {
       buttons.forEach(function (b) {
         var on = b === btn;
         b.setAttribute('aria-selected', String(on));
         b.tabIndex = on ? 0 : -1;
         document.getElementById(b.getAttribute('aria-controls')).hidden = !on;
       });
+      if (remember && window.history && history.replaceState) history.replaceState(null, '', '#' + tabName(btn));
     };
     tabs.hidden = false;
     buttons.forEach(function (b, i) {
-      b.addEventListener('click', function () { select(b); });
+      b.addEventListener('click', function () { select(b, true); });
       b.addEventListener('keydown', function (e) {
         var next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : null;
         if (next === null) return;
         var target = buttons[(next + buttons.length) % buttons.length];
-        select(target); target.focus();
+        select(target, true); target.focus();
       });
     });
-    select(buttons[0]);
+    var fromHash = buttons.filter(function (b) { return '#' + tabName(b) === location.hash; })[0];
+    select(fromHash || buttons[0], false);
+
+    // "Trích xuất văn bản": run it in place and swap in the refreshed tab
+    // content, instead of a full page load. Without fetch, the form posts
+    // normally and the redirect's #extract hash still reopens this tab.
+    if (window.fetch && window.DOMParser) {
+      document.addEventListener('submit', function (e) {
+        var form = e.target.closest('form[data-inline-extract]');
+        if (!form) return;
+        e.preventDefault();
+        var button = form.querySelector('button');
+        var label = button.querySelector('span');
+        var pane = form.closest('[role="tabpanel"]');
+        var errorBox = pane.querySelector('.extract-error');
+        button.disabled = true;
+        label.textContent = 'Đang trích xuất…';
+        if (errorBox) errorBox.hidden = true;
+        fetch(form.action, { method: 'POST', headers: { Accept: 'text/html' } })
+          .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
+          .then(function (result) {
+            var page = new DOMParser().parseFromString(result.html, 'text/html');
+            if (!result.ok) {
+              // Error page: its message is the paragraph right under the heading.
+              var message = page.querySelector('.center-card h1 + p');
+              throw new Error(message ? message.textContent : 'Trích xuất thất bại, thử lại sau.');
+            }
+            var freshPane = page.getElementById(pane.id);
+            if (freshPane) pane.innerHTML = freshPane.innerHTML;
+            // The MongoDB JSON tab shows the same record — keep it in sync too.
+            var freshJson = page.getElementById('json-source');
+            var json = document.getElementById('json-source');
+            if (freshJson && json) json.textContent = freshJson.textContent;
+          })
+          .catch(function (err) {
+            button.disabled = false;
+            label.textContent = 'Thử trích xuất lại';
+            if (errorBox) {
+              // TypeError = fetch itself failed (network), its message is browser English.
+              errorBox.textContent = (err instanceof TypeError || !err.message) ? 'Không kết nối được máy chủ, thử lại sau.' : err.message;
+              errorBox.hidden = false;
+            }
+          });
+      });
+    }
   }
 
   // ----- AI chat: floating action button + slide-over panel -----
@@ -714,6 +838,14 @@
     }
     toggleModeBtn.addEventListener('click', function () { setMode(!showingRaw); });
 
+    // For the draft saver: the value as currently on screen (the rows are only
+    // written back to the textarea on submit), and a way to redraw the rows
+    // after the textarea is changed from outside (draft restored / discarded).
+    metadataField.kvValue = function () {
+      return (!showingRaw && rootGroup) ? JSON.stringify(serializeKvGroup(rootGroup)) : metadataField.value;
+    };
+    metadataField.kvReload = function () { if (!showingRaw) rebuildVisual(); };
+
     // Whichever mode is on screen, make sure the real field reflects it before submit.
     var ownerForm = metadataField.form;
     if (ownerForm) ownerForm.addEventListener('submit', function () {
@@ -722,6 +854,116 @@
 
     setMode(false);
   }
+  // ----- unsaved-input drafts: forms marked data-draft-key keep what was typed in
+  // localStorage, so closing a dialog by accident (or reloading) loses nothing.
+  // Restored on the next open with a "Bỏ nháp" way out; cleared on submit. -----
+  var DRAFT_PREFIX = 'rdw-draft:';
+  var DRAFT_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+  function storageGet(key) { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } }
+  function storageSet(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode / full */ } }
+  function storageRemove(key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } }
+  function formatTime(ms) {
+    var d = new Date(ms);
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
+  }
+  // JSON fields compare by meaning, not formatting (server pretty-prints, the editor doesn't).
+  function canonical(value) {
+    try { return JSON.stringify(JSON.parse(value)); } catch (e) { return value; }
+  }
+
+  function setupDraft(form) {
+    if (form.draftAttached) return;
+    form.draftAttached = true;
+    var key = DRAFT_PREFIX + form.getAttribute('data-draft-key');
+    var extraScope = form.getAttribute('data-draft-scope') && document.getElementById(form.getAttribute('data-draft-scope'));
+    var fields = Array.prototype.filter.call(form.elements, function (el) {
+      return el.name && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|url|email|number)$/.test(el.type)));
+    });
+    if (!fields.length) return;
+    var isJson = function (el) { return el.hasAttribute('data-kv-metadata'); };
+    var read = function (el) { return el.kvValue ? el.kvValue() : el.value; };
+    var comparable = function (el, value) { return isJson(el) ? canonical(value) : value; };
+    var baseline = {};
+    fields.forEach(function (el) { baseline[el.name] = el.value; });
+
+    var note = document.createElement('div');
+    note.className = 'draft-note';
+    note.hidden = true;
+    var noteText = document.createElement('span');
+    var discard = document.createElement('button');
+    discard.type = 'button';
+    discard.className = 'draft-discard';
+    discard.textContent = 'Bỏ nháp';
+    note.appendChild(noteText);
+    note.appendChild(discard);
+    var host = extraScope || form;
+    host.insertBefore(note, host.firstChild);
+
+    function applyValues(values) {
+      fields.forEach(function (el) {
+        if (Object.prototype.hasOwnProperty.call(values, el.name)) el.value = values[el.name];
+        if (el.kvReload) el.kvReload();
+      });
+    }
+    // `has-draft` on the form lets CSS flag it where the fields are out of sight
+    // (upload: the "Tùy chọn" button), since the draft goes out with the next upload.
+    function setNote(text) {
+      if (text) noteText.textContent = text;
+      note.hidden = !text;
+      form.classList.toggle('has-draft', !!text);
+    }
+
+    function save() {
+      var values = {};
+      var changed = false;
+      fields.forEach(function (el) {
+        values[el.name] = read(el);
+        if (comparable(el, values[el.name]) !== comparable(el, baseline[el.name])) changed = true;
+      });
+      if (!changed) { storageRemove(key); setNote(null); return; }
+      var savedAt = Date.now();
+      storageSet(key, { values: values, savedAt: savedAt });
+      setNote('Đã lưu nháp tự động lúc ' + formatTime(savedAt) + '.');
+    }
+    var timer = null;
+    function scheduleSave() { clearTimeout(timer); timer = setTimeout(save, 300); }
+    [form, extraScope].forEach(function (scope) {
+      if (!scope) return;
+      scope.addEventListener('input', scheduleSave);
+      scope.addEventListener('change', scheduleSave);
+      // Adding/removing metadata rows is a click, not an input event.
+      scope.addEventListener('click', function (e) { if (e.target.closest('.kv-wrap')) scheduleSave(); });
+    });
+
+    discard.addEventListener('click', function () {
+      storageRemove(key);
+      applyValues(baseline);
+      setNote(null);
+    });
+    // Edit forms keep the draft through submit: if the server rejects it (422),
+    // nothing is lost, and once it IS saved the next open finds draft == stored
+    // values and drops it (below). An upload form always starts empty, so it
+    // can't tell — it opts in to clearing on submit instead.
+    var clearOnSubmit = form.hasAttribute('data-draft-clear-on-submit');
+    form.addEventListener('submit', function () {
+      clearTimeout(timer);
+      if (clearOnSubmit) storageRemove(key); else save();
+    });
+
+    var draft = storageGet(key);
+    if (!draft || !draft.values || Date.now() - draft.savedAt > DRAFT_MAX_AGE_MS) { storageRemove(key); return; }
+    var differs = fields.some(function (el) {
+      return el.name in draft.values && comparable(el, draft.values[el.name]) !== comparable(el, baseline[el.name]);
+    });
+    if (!differs) { storageRemove(key); return; }  // e.g. the draft was saved after all
+    applyValues(draft.values);
+    setNote('Đã khôi phục bản nháp chưa lưu (' + formatTime(draft.savedAt) + ').');
+  }
+
+  // Drafts first: a restored metadata value must be in the textarea before the
+  // key/value editor builds its rows from it.
+  Array.prototype.forEach.call(document.querySelectorAll('form[data-draft-key]'), setupDraft);
   Array.prototype.forEach.call(document.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
 
   // ----- document quick-look modal: opens a compact <dialog> instead of navigating away -----
@@ -769,6 +1011,7 @@
       e.preventDefault();
       fetchAndShowModal(quickEditModal, quickEditBody, link.getAttribute('href'), ['.card.narrow'], function (body) {
         wireCancelLink(body, closeQuickEditModal);
+        Array.prototype.forEach.call(body.querySelectorAll('form[data-draft-key]'), setupDraft);
         Array.prototype.forEach.call(body.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
       });
     });

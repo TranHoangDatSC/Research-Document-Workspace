@@ -33,6 +33,12 @@ _BASE_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 class ObjectResponse(io.BytesIO):
+    """What minio's get_object returns: read() / stream() / close() / release_conn()."""
+
+    def stream(self, amt):
+        while chunk := self.read(amt):
+            yield chunk
+
     def release_conn(self):
         pass
 
@@ -45,6 +51,8 @@ class FakeBackend:
         self.details = {}    # MongoDB document_details: str(document_id) -> dict
         self.chats = []      # MongoDB chat_messages
         self.objects = {}    # MinIO: object name -> bytes
+        self.content_types = {}  # MinIO: object name -> Content-Type given on upload
+        self.downloads = []  # MinIO: object names read, in order
         self.events = []     # order of delete steps, for the retry tests
         self.fail = set()
         self._clock = count()
@@ -240,11 +248,14 @@ class FakeBackend:
     # ----- MinIO -----
     def put_object(self, bucket, key, stream, size, **kwargs):
         self._check("minio")
-        self.objects[key] = stream.read()
+        self.objects[key] = stream.read(size)
+        self.content_types[key] = kwargs.get("content_type")
 
-    def get_object(self, bucket, key):
+    def get_object(self, bucket, key, offset=0, length=0):
         self._check("minio")
-        return ObjectResponse(self.objects[key])
+        self.downloads.append(key)
+        data = self.objects[key]
+        return ObjectResponse(data[offset:offset + length] if length else data[offset:])
 
     def remove_object(self, bucket, key):
         self.events.append("object-delete")

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPExcep
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
-from app import auth as core_auth, llm
+from app import auth as core_auth, file_types, llm
 from app.api.health import health_ready
 from app.schemas.projects import ProjectCreate
 from app.services import auth as auth_service, projects, documents, rag as rag_service
@@ -21,6 +21,11 @@ templates.env.globals["icon"] = icon
 templates.env.filters["filesize"] = filesize
 templates.env.filters["dt"] = fmt_datetime
 templates.env.filters["pretty_json"] = pretty_json
+# File kinds for icons, previews and the upload picker (app/file_types.py).
+templates.env.filters["file_kind"] = lambda doc: file_types.kind_of(doc["object_name"]) or file_types.KINDS["document"]
+templates.env.globals["upload_accept"] = file_types.accept_attribute
+templates.env.globals["upload_limits_json"] = lambda: json.dumps(file_types.limits_by_extension())
+templates.env.globals["upload_summary"] = file_types.summary
 # Cache-busts /static/* on every process start so a redeploy can't get stuck
 # behind a browser's cached style.css/app.js.
 templates.env.globals["asset_version"] = str(int(time.time()))
@@ -183,7 +188,8 @@ def edit_document(request: Request, document_id: UUID, tags: Annotated[str, Form
 @router.post("/ui/documents/{document_id}/extract")
 def extract(request: Request, document_id: UUID):
     documents.extract_document(document_id)
-    return RedirectResponse(f"/ui/documents/{document_id}", status_code=303)
+    # Land back on the extracted-text tab, not the default "Thông tin" tab (app.js reads the hash).
+    return RedirectResponse(f"/ui/documents/{document_id}#extract", status_code=303)
 
 @router.get("/ui/documents/{document_id}/delete")
 def confirm_delete(request: Request, document_id: UUID):

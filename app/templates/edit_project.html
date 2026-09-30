@@ -4,7 +4,7 @@
 {% block content %}
 <section class="card narrow" id="edit-project-card">
   <div class="card-head"><h2>Sửa dự án</h2></div>
-  <form method="post" action="/ui/projects/{{ project.id }}/edit" class="stack">
+  <form method="post" action="/ui/projects/{{ project.id }}/edit" class="stack" data-draft-key="edit-project:{{ project.id }}">
     <label class="field">Tên dự án
       <input name="name" required maxlength="200" value="{{ project.name }}">
     </label>

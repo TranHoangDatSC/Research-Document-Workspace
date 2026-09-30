@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -11,20 +12,20 @@ from uuid import uuid4
 
 import psycopg
 from fastapi import HTTPException
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 
+from app import file_types
 from app.bootstrap import bucket_name
-from app.extractors import ExtractionError, extract_text
+from app.extractors import MAX_INPUT_BYTES as EXTRACT_MAX_BYTES, ExtractionError, extract_text
 from app.repositories import documents as repository
 from app.storage import minio_client
 
 log = logging.getLogger("uvicorn.error")
-MAX_BYTES = 10 * 1024 * 1024
-MIME_TYPES = {
-    ".txt": "text/plain",
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
+# MinIO multipart part size. minio-py keeps at most 3 parts uploading plus 1
+# being read, so one upload holds ~4 x 8 MiB in memory however large the file.
+UPLOAD_PART_SIZE = 8 * 1024 * 1024
+# Streamed to the client in chunks of this size (download / preview).
+STREAM_CHUNK = 256 * 1024
 
 
 def storage_error(stage, exc, document_id=None):
@@ -98,14 +99,37 @@ def compensate(document_id, object_name, object_attempted, mongo_attempted):
         )
 
 
+class _HashingReader:
+    """Wraps the upload's temp file: MinIO pulls from it part by part and the
+    SHA-256 is computed on the way through — the file is never all in memory."""
+
+    def __init__(self, raw):
+        self.raw = raw
+        self.sha256 = hashlib.sha256()
+
+    def read(self, size=-1):
+        chunk = self.raw.read(size)
+        self.sha256.update(chunk)
+        return chunk
+
+
+def _file_size(upload):
+    # Starlette has already spooled the upload to a temp file; measure it there.
+    upload.file.seek(0, io.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    return size
+
+
 def upload_document(project_id, file, tags="", authors="", custom_metadata="{}"):
     require_project(project_id)
     filename = PurePosixPath((file.filename or "").replace("\\", "/")).name
-    suffix = PurePosixPath(filename).suffix.lower()
+    suffix = file_types.suffix_of(filename)
     if not filename or len(filename) > 255 or any(ord(c) < 32 for c in filename):
         raise HTTPException(422, "Invalid filename")
-    if suffix not in MIME_TYPES:
-        raise HTTPException(415, "Allowed extensions: .txt, .pdf, .docx")
+    kind = file_types.kind_of(filename)
+    if kind is None:
+        raise HTTPException(415, "Unsupported file type. Allowed: " + " ".join(file_types.EXTENSIONS))
     try:
         metadata = json.loads(custom_metadata)
     except ValueError:
@@ -113,42 +137,35 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
     if not isinstance(metadata, dict):
         raise HTTPException(422, "custom_metadata must be a JSON object")
     tag_list, author_list = split_values(tags), split_values(authors)
-    payload = file.file.read(MAX_BYTES + 1)
-    if len(payload) > MAX_BYTES:
-        raise HTTPException(413, "File exceeds 10 MiB")
-    if not payload:
+    size = _file_size(file)
+    limit = file_types.limit_bytes(kind)
+    if size > limit:
+        raise HTTPException(413, f"{kind.label} tối đa {limit // (1024 * 1024)} MiB")
+    if size == 0:
         raise HTTPException(422, "Empty file")
 
     document_id = uuid4()
     object_name = f"documents/{document_id}/original{suffix}"
-    details = {
-        "document_id": str(document_id),
-        "tags": tag_list,
-        "authors": author_list,
-        "source": {"type": "upload", "url": None},
-        "custom_metadata": metadata,
-        "extracted_text": None,
-        "sha256": hashlib.sha256(payload).hexdigest(),
-    }
+    content_type = file_types.mime_of(filename)
+    reader = _HashingReader(file.file)
     object_attempted = mongo_attempted = finalizing = False
     try:
         # Durable pending record makes interrupted uploads discoverable.
-        repository.create_pending(
-            document_id,
-            project_id,
-            filename,
-            object_name,
-            MIME_TYPES[suffix],
-            len(payload),
-        )
+        repository.create_pending(document_id, project_id, filename, object_name, content_type, size)
         object_attempted = True
         minio_client().put_object(
-            bucket_name(),
-            object_name,
-            io.BytesIO(payload),
-            len(payload),
-            content_type=MIME_TYPES[suffix],
+            bucket_name(), object_name, reader, size,
+            content_type=content_type, part_size=UPLOAD_PART_SIZE,
         )
+        details = {
+            "document_id": str(document_id),
+            "tags": tag_list,
+            "authors": author_list,
+            "source": {"type": "upload", "url": None},
+            "custom_metadata": metadata,
+            "extracted_text": None,
+            "sha256": reader.sha256.hexdigest(),
+        }
         mongo_attempted = True
         repository.insert_details(details)
         finalizing = True
@@ -161,7 +178,7 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
         else:
             compensate(document_id, object_name, object_attempted, mongo_attempted)
         raise storage_error("upload", exc, document_id) from None
-    log.info("document_uploaded document_id=%s project_id=%s size_bytes=%s", document_id, project_id, len(payload))
+    log.info("document_uploaded document_id=%s project_id=%s kind=%s size_bytes=%s", document_id, project_id, kind.name, size)
     return {**row, **details}
 
 
@@ -186,35 +203,96 @@ def get_document(document_id):
 
 
 def read_object(row, stage):
+    """Whole file in memory — only for text extraction, which is capped at
+    EXTRACT_MAX_BYTES (checked before calling). Downloads stream instead."""
     try:
         response = minio_client().get_object(bucket_name(), row["object_name"])
         try:
-            # Bounded buffering avoids returning HTTP 200 before a failed read.
-            payload = response.read(MAX_BYTES + 1)
+            payload = response.read(EXTRACT_MAX_BYTES + 1)
         finally:
             response.close()
             response.release_conn()
-        if len(payload) > MAX_BYTES or len(payload) != row["size_bytes"]:
+        if len(payload) != row["size_bytes"]:
             raise RuntimeError("Stored file size mismatch")
     except Exception as exc:
         raise storage_error(stage, exc, row["id"]) from None
     return payload
 
 
-def download_document(document_id):
+_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+
+
+def parse_range(header, size):
+    """HTTP Range -> (start, end) inclusive, or None for the whole file.
+    Malformed or multi-range headers are ignored (whole file, 200), as the
+    spec allows; a range entirely past the end is 416."""
+    match = _RANGE_RE.fullmatch((header or "").strip())
+    if not match or match.group(1) == match.group(2) == "":
+        return None
+    first, last = match.groups()
+    if first:
+        start = int(first)
+        end = min(int(last), size - 1) if last else size - 1
+    else:  # "bytes=-N": the last N bytes
+        start, end = max(size - int(last), 0), size - 1
+        if int(last) == 0:
+            start = size
+    if start > end or start >= size:
+        raise HTTPException(416, "Requested range not satisfiable", headers={"Content-Range": f"bytes */{size}"})
+    return start, end
+
+
+def _stream_object(row, range_header, disposition, stage, extra_headers=None):
+    """Streams the stored file (or the requested byte range) from MinIO in
+    STREAM_CHUNK pieces, so a 500 MiB video never sits in server memory and
+    <video> can seek. A failure mid-stream can only cut the response short
+    (the 200/206 is already sent); the client sees an incomplete file."""
+    size = row["size_bytes"]
+    byte_range = parse_range(range_header, size)
+    start, end = byte_range or (0, size - 1)
+    try:
+        response = minio_client().get_object(bucket_name(), row["object_name"], offset=start, length=end - start + 1)
+    except Exception as exc:
+        raise storage_error(stage, exc, row["id"]) from None
+
+    def body():
+        try:
+            yield from response.stream(STREAM_CHUNK)
+        finally:
+            response.close()
+            response.release_conn()
+
+    headers = {
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''" + quote(row["original_name"], safe=""),
+        "Content-Length": str(end - start + 1),
+        "Accept-Ranges": "bytes",
+        "X-Content-Type-Options": "nosniff",
+        # A document's file never changes (a new upload is a new document).
+        "Cache-Control": "private, max-age=86400",
+        **(extra_headers or {}),
+    }
+    if byte_range:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(body(), status_code=206 if byte_range else 200, media_type=row["content_type"], headers=headers)
+
+
+def download_document(document_id, range_header=None):
     row = document_row(document_id)
     require_ready(row)
-    payload = read_object(row, "download")
-    log.info("document_downloaded document_id=%s size_bytes=%s", document_id, len(payload))
-    return Response(
-        content=payload,
-        media_type=row["content_type"],
-        headers={
-            "Content-Disposition": "attachment; filename*=UTF-8''"
-            + quote(row["original_name"], safe=""),
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+    log.info("document_downloaded document_id=%s size_bytes=%s", document_id, row["size_bytes"])
+    return _stream_object(row, range_header, "attachment", "download")
+
+
+def preview_document(document_id, range_header=None):
+    """Inline for <img>/<audio>/<video> on the document page. Only media kinds:
+    everything else is download-only. `sandbox` keeps even a mislabelled file
+    from running script if opened directly."""
+    row = document_row(document_id)
+    require_ready(row)
+    kind = file_types.kind_of(row["object_name"])
+    if kind is None or kind.preview is None:
+        raise HTTPException(415, "Loại tệp này không xem trước được, hãy tải về")
+    return _stream_object(row, range_header, "inline", "preview", {"Content-Security-Policy": "sandbox"})
 
 
 def delete_document(document_id):
@@ -264,8 +342,15 @@ def extract_document(document_id):
     """Re-runnable: downloads the stored file, extracts text, overwrites MongoDB."""
     row = document_row(document_id)
     require_ready(row)
+    # Decided before downloading anything: no point pulling a 500 MiB video
+    # out of MinIO to find out it has no text.
+    kind = file_types.kind_of(row["object_name"])
+    if kind is None or not kind.extractable:
+        raise HTTPException(422, f"{kind.label if kind else 'Loại tệp này'} không có văn bản để trích xuất")
+    if row["size_bytes"] > EXTRACT_MAX_BYTES:
+        raise HTTPException(422, f"Tệp quá {EXTRACT_MAX_BYTES // (1024 * 1024)} MiB, không trích xuất văn bản được (vẫn tải về và lưu bình thường)")
     payload = read_object(row, "extract-download")
-    suffix = PurePosixPath(row["object_name"]).suffix.lower()
+    suffix = file_types.suffix_of(row["object_name"])
     try:
         result = extract_text(payload, suffix)
     except ExtractionError as exc:

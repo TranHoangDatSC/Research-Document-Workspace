@@ -4,13 +4,17 @@
 import io
 import unittest
 import zipfile
+from unittest.mock import patch
 from uuid import UUID
 
 from docx import Document
+from pptx import Presentation
+from pptx.util import Inches
 from pypdf import PdfWriter
 
 from support import FakeBackend
 
+from app.services import documents as documents_service
 from app.extractors import MAX_EXTRACTED_CHARACTERS, MAX_INPUT_BYTES, ExtractionError, extract_text
 
 
@@ -162,6 +166,41 @@ class DocxExtractionTests(ExtractorTestCase):
         self.assertEqual((result.text, result.truncated), ("one two", True))
 
 
+def build_pptx():
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])  # title + content
+    slide.shapes.title.text = "Workload forecasting"
+    slide.placeholders[1].text = "ARIMA vs LSTM"
+    slide.notes_slide.notes_text_frame.text = "Mention the 2021 survey"
+    second = presentation.slides.add_slide(presentation.slide_layouts[5])  # title only
+    second.shapes.title.text = "Results"
+    table = second.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(4), Inches(1)).table
+    table.cell(0, 0).text, table.cell(0, 1).text = "Model", "MAPE"
+    table.cell(1, 0).text, table.cell(1, 1).text = "LSTM", "7.2%"
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
+class PresentationAndDataExtractionTests(ExtractorTestCase):
+    def test_pptx_slides_tables_and_notes(self):
+        result = extract_text(build_pptx(), ".pptx")
+        self.assertEqual(result.method, "pptx_text")
+        for fragment in ("--- Slide 1 ---", "Workload forecasting", "ARIMA vs LSTM",
+                         "Ghi chú: Mention the 2021 survey", "--- Slide 2 ---", "Model\tMAPE", "LSTM\t7.2%"):
+            self.assertIn(fragment, result.text)
+        self.assertLess(result.text.index("Slide 1"), result.text.index("Slide 2"))
+
+    def test_corrupt_pptx(self):
+        self.assert_extraction_error("corrupt_file", b"not a pptx", ".pptx")
+
+    def test_markdown_csv_json_read_as_text(self):
+        for extension, content in ((".md", "# Tiêu đề\n- ý một"), (".csv", "model,mape\nlstm,7.2"), (".json", '{"model": "lstm"}')):
+            with self.subTest(extension=extension):
+                result = extract_text(content.encode("utf-8"), extension)
+                self.assertEqual((result.text, result.method), (content, "plain_text"))
+
+
 class ExtractDocumentTests(unittest.TestCase):
     """The "Trích xuất văn bản" action on an uploaded document."""
 
@@ -197,7 +236,8 @@ class ExtractDocumentTests(unittest.TestCase):
     def test_page_button_extracts_and_shows_text(self):
         document_id = self.upload("a.txt", b"Visible extracted sentence")
         response = self.client.post(f"/ui/documents/{document_id}/extract", follow_redirects=False)
-        self.assertEqual(response.headers["location"], f"/ui/documents/{document_id}")
+        # Back on the extracted-text tab, not the default info tab.
+        self.assertEqual(response.headers["location"], f"/ui/documents/{document_id}#extract")
         self.assertIn("Visible extracted sentence", self.client.get(response.headers["location"]).text)
 
     def test_reextraction_overwrites(self):
@@ -215,6 +255,33 @@ class ExtractDocumentTests(unittest.TestCase):
                 document_id = self.upload(name, content)
                 self.assertEqual(self.extract(document_id).status_code, 422)
                 self.assertIsNone(self.backend.details[document_id]["extracted_text"])
+
+    def test_pptx_document(self):
+        document_id = self.upload("deck.pptx", build_pptx())
+        extracted = self.extract(document_id).json()["extracted_text"]
+        self.assertIn("ARIMA vs LSTM", extracted["text"])
+
+    def test_media_has_no_text_and_is_never_downloaded(self):
+        for name in ("clip.mp4", "photo.png", "talk.mp3", "data.zip"):
+            with self.subTest(name=name):
+                document_id = self.upload(name, b"binary")
+                response = self.extract(document_id)
+                self.assertEqual(response.status_code, 422)
+                self.assertIn("không có văn bản", response.json()["detail"])
+        self.assertEqual(self.backend.downloads, [])
+
+    def test_too_large_to_extract_is_refused_before_download(self):
+        document_id = self.upload("big.txt", b"x" * 20)
+        with patch.object(documents_service, "EXTRACT_MAX_BYTES", 10):
+            response = self.extract(document_id)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.backend.downloads, [])
+
+    def test_media_page_has_no_extract_button(self):
+        document_id = self.upload("clip.mp4", b"x")
+        html = self.client.get(f"/ui/documents/{document_id}").text
+        self.assertNotIn("data-inline-extract", html)
+        self.assertIn("Video không có văn bản để trích xuất", html)
 
     def test_not_ready_document_is_409(self):
         document_id = self.upload("a.txt", b"hello")

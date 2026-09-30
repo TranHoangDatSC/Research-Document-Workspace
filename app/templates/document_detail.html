@@ -12,11 +12,12 @@
 {% endblock %}
 
 {% block content %}
+{% set kind = document|file_kind %}
 <div class="page-head doc-head">
   <div class="doc-title">
-    <span class="file-icon lg">{{ icon('file', 24) }}</span>
+    <span class="file-icon lg">{{ icon(kind.icon, 24) }}</span>
     <div>
-      <p class="eyebrow">Tài liệu</p>
+      <p class="eyebrow">{{ kind.label }}</p>
       <h1>{{ document.original_name }}</h1>
       <p><span class="badge {{ document.status }}">{{ document.status }}</span> <span class="muted small-text">{{ document.size_bytes|filesize }} · {{ document.content_type }}</span></p>
     </div>
@@ -35,6 +36,19 @@
 </div>
 
 <div id="pane-info" role="tabpanel" aria-labelledby="tab-info" class="pane">
+  {% if kind.preview %}
+  {% set content_url = '/documents/' ~ document.id ~ '/content' %}
+  <section class="card media-preview preview-{{ kind.preview }}">
+    {% if kind.preview == 'image' %}
+    <a href="{{ content_url }}" target="_blank" rel="noopener" title="Mở ảnh cỡ gốc"><img src="{{ content_url }}" alt="{{ document.original_name }}" loading="lazy"></a>
+    {% elif kind.preview == 'video' %}
+    <video src="{{ content_url }}" controls preload="metadata"></video>
+    {% else %}
+    <audio src="{{ content_url }}" controls preload="metadata"></audio>
+    {% endif %}
+    <p class="muted small-text">Trình duyệt không phát được định dạng này? Dùng "Tải file gốc" ở trên.</p>
+  </section>
+  {% endif %}
   <div class="split even">
     <section class="card">
       <div class="card-head"><h2>Thông tin tài liệu</h2></div>
@@ -62,11 +76,16 @@
   <section class="card">
     <div class="card-head">
       <h2>Văn bản trích xuất</h2>
-      <form method="post" action="/ui/documents/{{ document.id }}/extract">
+      {% if kind.extractable %}
+      <form method="post" action="/ui/documents/{{ document.id }}/extract" data-inline-extract>
         <button type="submit" class="btn ghost sm">{{ icon('refresh', 14) }}<span>{{ 'Trích xuất lại' if document.extracted_text else 'Trích xuất văn bản' }}</span></button>
       </form>
+      {% endif %}
     </div>
-    {% if document.extracted_text %}
+    <p class="notice extract-error" hidden></p>
+    {% if not kind.extractable %}
+    <p class="muted">{{ kind.label }} không có văn bản để trích xuất, nên không dùng được khi hỏi AI. Tệp vẫn được lưu và tải về bình thường.</p>
+    {% elif document.extracted_text %}
     <dl class="props">
       <div><dt>{{ icon('info', 14) }}Phương thức</dt><dd>{{ document.extracted_text.method }}</dd></div>
       <div><dt>{{ icon('hash', 14) }}Số ký tự</dt><dd>{{ document.extracted_text.character_count }}{% if document.extracted_text.truncated %} <span class="muted">(đã cắt bớt)</span>{% endif %}</dd></div>

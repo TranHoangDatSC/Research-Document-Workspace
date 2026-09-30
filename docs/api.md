@@ -27,6 +27,7 @@ xem `tests/integration/_auth_helper.py`). Chi tiết tài khoản/role:
 | GET | `/projects/{project_id}/documents?limit=20&offset=0` | Danh sách tài liệu (cả `pending`/`failed`) |
 | GET | `/documents/{document_id}` | Metadata PostgreSQL + MongoDB (chỉ tài liệu `ready`) |
 | GET | `/documents/{document_id}/download` | Tải file gốc |
+| GET | `/documents/{document_id}/content` | Xem trước ảnh/âm thanh/video (inline, hỗ trợ `Range`); loại khác 415 |
 | POST | `/documents/{document_id}/extract` | Trích xuất văn bản, lưu vào MongoDB, trả metadata đầy đủ |
 | POST | `/projects/{project_id}/ask` | Hỏi đáp AI trên văn bản đã trích xuất trong project (`{"question"}`) |
 
@@ -46,14 +47,37 @@ curl.exe -F "file=@samples/day2-sample.txt" -F "tags=cloud,database" `
 | --- | --- |
 | ID sai định dạng UUID, file rỗng, JSON metadata sai, >50 tag/author | 422 |
 | Project/tài liệu không tồn tại | 404 |
-| Đuôi file không phải `.txt`, `.pdf`, `.docx` | 415 |
-| File > 10 MiB | 413 |
+| Đuôi file không nằm trong danh sách dưới đây | 415 |
+| File vượt giới hạn của nhóm | 413 |
+| `Range` nằm ngoài file | 416 |
 | Tài liệu chưa `ready` (đang `pending` hoặc `failed`) | 409 |
 | Storage không phản hồi | 503 |
 
-Chỉ kiểm tra đuôi file, không kiểm tra nội dung hay quét mã độc. Giới hạn 10 MiB
-áp dụng trong endpoint, không phải giới hạn kích thước request toàn cục.
-Hai file trùng tên vẫn lưu riêng vì object key theo UUID.
+### Loại tệp được lưu
+
+Danh sách và giới hạn nằm ở `app/file_types.py`; đổi giới hạn (MiB) qua biến
+môi trường `MAX_UPLOAD_MB_<NHÓM>`, ví dụ `MAX_UPLOAD_MB_VIDEO=1000`.
+
+| Nhóm | Đuôi | Giới hạn mặc định | Trích xuất văn bản / hỏi AI | Xem trước |
+| --- | --- | --- | --- | --- |
+| Tài liệu | `.txt .md .pdf .docx` | 50 MiB | Có | — |
+| Trình chiếu | `.pptx` | 100 MiB | Có (chữ, bảng, ghi chú từng slide) | — |
+| Dữ liệu | `.csv .json` | 50 MiB | Có (như văn bản) | — |
+| Hình ảnh | `.png .jpg .jpeg .gif .webp` | 25 MiB | Không | Ảnh |
+| Âm thanh | `.mp3 .wav .m4a .ogg` | 100 MiB | Không | Trình phát |
+| Video | `.mp4 .webm .mov` | 500 MiB | Không | Trình phát, tua được |
+| Tệp nén | `.zip` | 200 MiB | Không | — |
+
+Upload được stream từ file tạm sang MinIO theo từng phần 8 MiB (SHA-256 tính
+trong lúc truyền), tải về và xem trước cũng stream theo từng đoạn — file lớn
+không nằm trọn trong RAM của container `web`. Trích xuất văn bản thì đọc cả
+file vào bộ nhớ nên chỉ nhận file ≤ 50 MiB (lớn hơn vẫn lưu/tải bình thường,
+chỉ không trích xuất được, 422).
+
+Chỉ kiểm tra đuôi file, không kiểm tra nội dung hay quét mã độc. File luôn được
+trả về với MIME type theo đuôi đã cho phép kèm `X-Content-Type-Options: nosniff`;
+`/content` thêm `Content-Security-Policy: sandbox`. Hai file trùng tên vẫn lưu
+riêng vì object key theo UUID.
 
 ## Trích xuất văn bản
 
@@ -64,7 +88,10 @@ văn bản (`app/extractors.py`, hàm thuần không I/O) rồi ghi đè trườ
 
 `extracted_text` sau khi trích xuất: `{"text", "method", "character_count",
 "word_count", "truncated", "extracted_at"}`. `method` là `plain_text` (.txt),
-`pdf_text` (.pdf) hoặc `docx_text` (.docx). Văn bản lưu tối đa 200 000 ký tự;
+`pdf_text` (.pdf), `docx_text` (.docx) hoặc `pptx_text` (.pptx; mỗi slide mở
+đầu bằng `--- Slide N ---`, ghi chú người trình bày có tiền tố `Ghi chú:`).
+`.md/.csv/.json` cũng là `plain_text`. Ảnh, âm thanh, video, zip trả 422 ngay,
+không tải file từ MinIO. Văn bản lưu tối đa 200 000 ký tự;
 vượt quá thì `truncated: true` và chỉ phần đã lưu được tính vào
 `character_count`/`word_count`.
 

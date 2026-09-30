@@ -4,11 +4,15 @@ import io
 from dataclasses import dataclass
 
 from docx import Document
+from pptx import Presentation
 from pypdf import PdfReader
 
 
 MAX_EXTRACTED_CHARACTERS = 200_000
-MAX_INPUT_BYTES = 10 * 1024 * 1024
+# Extraction reads the whole file into memory (the parsers need it), so this
+# stays well under the web container's 512 MB even though uploads may be
+# larger: a bigger file is still stored, it just can't be text-extracted.
+MAX_INPUT_BYTES = 50 * 1024 * 1024
 
 
 class ExtractionError(Exception):
@@ -62,10 +66,45 @@ def _extract_docx(content: bytes) -> tuple[str, str]:
     return text, "docx_text"
 
 
+def _shape_texts(shape):
+    if shape.has_text_frame:
+        yield shape.text_frame.text
+    if getattr(shape, "has_table", False) and shape.has_table:
+        for row in shape.table.rows:
+            yield "\t".join(cell.text for cell in row.cells)
+    if shape.shape_type == 6:  # MSO_SHAPE_TYPE.GROUP
+        for inner in shape.shapes:
+            yield from _shape_texts(inner)
+
+
+def _extract_pptx(content: bytes) -> tuple[str, str]:
+    """Slide by slide: text boxes, tables and speaker notes, with a slide heading
+    so an answer can say which slide something came from."""
+    try:
+        presentation = Presentation(io.BytesIO(content))
+        slides = []
+        for number, slide in enumerate(presentation.slides, start=1):
+            parts = [t for shape in slide.shapes for t in _shape_texts(shape) if t.strip()]
+            if slide.has_notes_slide:
+                notes = slide.notes_slide.notes_text_frame.text
+                if notes.strip():
+                    parts.append("Ghi chú: " + notes)
+            if parts:
+                slides.append(f"--- Slide {number} ---\n" + "\n".join(parts))
+        text = "\n\n".join(slides)
+    except Exception:
+        raise ExtractionError("corrupt_file") from None
+    return text, "pptx_text"
+
+
 _EXTRACTORS = {
     ".txt": _extract_txt,
+    ".md": _extract_txt,
+    ".csv": _extract_txt,
+    ".json": _extract_txt,
     ".pdf": _extract_pdf,
     ".docx": _extract_docx,
+    ".pptx": _extract_pptx,
 }
 
 
@@ -92,7 +131,7 @@ def extract_text(
     extension: str,
     max_characters: int = MAX_EXTRACTED_CHARACTERS,
 ) -> ExtractionResult:
-    """Extract text from .txt/.pdf/.docx bytes. Counts describe the saved text."""
+    """Extract text from .txt/.md/.csv/.json/.pdf/.docx/.pptx bytes. Counts describe the saved text."""
     if not isinstance(content, bytes):
         raise TypeError("content must be bytes")
 

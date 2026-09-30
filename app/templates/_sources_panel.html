@@ -4,9 +4,9 @@
     <span class="muted small-text">{{ documents|length }}</span>
   </div>
 
-  <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row" id="upload-form">
+  <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row" id="upload-form" data-draft-key="upload:{{ project.id }}" data-draft-scope="upload-advanced-fields" data-draft-clear-on-submit>
     <label class="upload-btn" for="file-input">{{ icon('plus', 14) }}<span id="file-pick-label">Chọn tệp</span></label>
-    <input name="file" type="file" required accept=".txt,.pdf,.docx" id="file-input" class="sr-only">
+    <input name="file" type="file" required accept="{{ upload_accept() }}" id="file-input" class="sr-only" data-limits="{{ upload_limits_json() }}">
     <button type="submit" class="upload-go" id="upload-go">{{ icon('upload', 14) }}<span>Tải lên</span></button>
     <details class="upload-more" id="upload-more">
       <summary title="Tags, tác giả, metadata bổ sung">{{ icon('sliders', 14) }}<span>Tùy chọn</span></summary>
@@ -28,26 +28,35 @@
     <span class="upload-file-text">
       <strong class="upload-file-name" id="upload-file-name"></strong>
       <small class="upload-file-meta" id="upload-file-meta"></small>
+      <span class="upload-progress" id="upload-progress" hidden><span></span></span>
     </span>
     <button type="button" class="icon-btn upload-file-clear" id="upload-file-clear" title="Bỏ chọn tệp" aria-label="Bỏ chọn tệp">{{ icon('x', 14) }}</button>
   </div>
-  <p class="upload-hint" id="file-hint">.txt · .pdf · .docx · tối đa 10 MiB — hoặc kéo thả vào đây</p>
+  <details class="upload-hint" id="file-hint">
+    <summary>Tài liệu, trình chiếu, dữ liệu, ảnh, âm thanh, video, zip — hoặc kéo thả vào đây</summary>
+    <ul class="upload-types">
+      {% for label, exts, limit_mb in upload_summary() %}<li><strong>{{ label }}</strong> <span>{{ exts }}</span> <em>≤ {{ limit_mb }} MiB</em></li>{% endfor %}
+    </ul>
+  </details>
 
   <nav class="source-list" aria-label="Danh sách tài liệu">
     {% for doc in documents %}
+    {% set kind = doc|file_kind %}
     <div class="source-item {{ doc.status }}{% if active_document_id and doc.id == active_document_id %} active{% endif %}">
-      {% if doc.status == 'ready' %}
+      {% if doc.status == 'ready' and kind.extractable %}
       <input type="checkbox" class="source-check" form="ai-form" name="document_ids" value="{{ doc.id }}" checked title="Dùng khi hỏi AI" aria-label="Dùng {{ doc.original_name }} khi hỏi AI">
       {% else %}
+      {# Images, audio, video and zips have no text for the AI to read. #}
       <span class="source-check-spacer" aria-hidden="true"></span>
       {% endif %}
+      <span class="source-kind kind-{{ kind.name }}" title="{{ kind.label }}">{{ icon(kind.icon, 15) }}</span>
       {% if doc.status == 'ready' %}
       <a class="source-main" href="/ui/documents/{{ doc.id }}" title="{{ doc.original_name }}">
       {% else %}
       <span class="source-main" title="{{ doc.original_name }}">
       {% endif %}
         <span class="source-name">{{ doc.original_name }}</span>
-        <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
+        <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ kind.label }} · {{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
       {% if doc.status == 'ready' %}</a>{% else %}</span>{% endif %}
       {% if doc.status == 'ready' %}
       <a class="source-action source-view" href="/ui/documents/{{ doc.id }}" title="Mở tài liệu chi tiết" aria-label="Mở {{ doc.original_name }} ở trang chi tiết">{{ icon('eye', 14) }}</a>

@@ -4,7 +4,7 @@
 {% block content %}
 <section class="card narrow" id="edit-document-card">
   <div class="card-head"><h2>Sửa metadata</h2><span class="muted small-text">{{ document.original_name }}</span></div>
-  <form method="post" action="/ui/documents/{{ document.id }}/edit" class="stack">
+  <form method="post" action="/ui/documents/{{ document.id }}/edit" class="stack" data-draft-key="edit-document:{{ document.id }}">
     <label class="field">Tags, cách nhau bởi dấu phẩy
       <input name="tags" maxlength="5000" value="{{ document.tags|join(',') }}">
     </label>

@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, File, Form, Header, Query, UploadFile
 
 from app.services import documents as service
 
@@ -44,8 +44,15 @@ def update_document(
 
 
 @router.get("/documents/{document_id}/download")
-def download_document(document_id: UUID):
-    return service.download_document(document_id)
+def download_document(document_id: UUID, range: Annotated[str | None, Header()] = None):
+    """The original file as an attachment. Supports `Range` (resumable downloads)."""
+    return service.download_document(document_id, range)
+
+
+@router.get("/documents/{document_id}/content")
+def preview_document(document_id: UUID, range: Annotated[str | None, Header()] = None):
+    """Inline image/audio/video for previews; `Range` lets <video> seek. 415 for other kinds."""
+    return service.preview_document(document_id, range)
 
 
 @router.delete("/documents/{document_id}")
