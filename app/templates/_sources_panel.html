@@ -5,11 +5,11 @@
   </div>
 
   <form method="post" action="/ui/projects/{{ project.id }}/documents" enctype="multipart/form-data" class="upload-row" id="upload-form">
-    <label class="upload-btn" for="file-input">{{ icon('plus', 14) }}<span>Thêm nguồn</span></label>
+    <label class="upload-btn" for="file-input">{{ icon('plus', 14) }}<span id="file-pick-label">Chọn tệp</span></label>
     <input name="file" type="file" required accept=".txt,.pdf,.docx" id="file-input" class="sr-only">
-    <button type="submit" class="upload-go" title="Tải lên" aria-label="Tải tài liệu lên">{{ icon('upload', 14) }}</button>
+    <button type="submit" class="upload-go" id="upload-go">{{ icon('upload', 14) }}<span>Tải lên</span></button>
     <details class="upload-more" id="upload-more">
-      <summary title="Tags, tác giả, metadata">{{ icon('sliders', 13) }}</summary>
+      <summary title="Tags, tác giả, metadata bổ sung">{{ icon('sliders', 14) }}<span>Tùy chọn</span></summary>
       <div class="stack tight" id="upload-advanced-fields">
         <label class="field">Tags, cách nhau bởi dấu phẩy
           <input name="tags" maxlength="5000" placeholder="cloud,docker">
@@ -23,7 +23,15 @@
       </div>
     </details>
   </form>
-  <p class="upload-hint muted small-text" id="file-hint">.txt · .pdf · .docx · tối đa 10 MiB — hoặc kéo thả vào đây</p>
+  <div class="upload-file" id="upload-file" hidden>
+    <span class="upload-file-icon">{{ icon('file', 16) }}</span>
+    <span class="upload-file-text">
+      <strong class="upload-file-name" id="upload-file-name"></strong>
+      <small class="upload-file-meta" id="upload-file-meta"></small>
+    </span>
+    <button type="button" class="icon-btn upload-file-clear" id="upload-file-clear" title="Bỏ chọn tệp" aria-label="Bỏ chọn tệp">{{ icon('x', 14) }}</button>
+  </div>
+  <p class="upload-hint" id="file-hint">.txt · .pdf · .docx · tối đa 10 MiB — hoặc kéo thả vào đây</p>
 
   <nav class="source-list" aria-label="Danh sách tài liệu">
     {% for doc in documents %}

@@ -194,17 +194,41 @@
   var uploadInput = document.getElementById('file-input');
   var uploadForm = uploadInput && uploadInput.closest('form');
   var sourcesPanel = document.getElementById('sources-panel');
-  var fileHint = document.getElementById('file-hint');
   if (uploadInput) {
-    var originalHint = fileHint ? fileHint.textContent : '';
     var MAX = 10 * 1024 * 1024;
-    var describeFile = function (file) {
-      if (!fileHint) return;
-      if (!file) { fileHint.textContent = originalHint; return; }
-      var mib = (file.size / 1048576).toFixed(2);
-      fileHint.textContent = file.name + ' · ' + (file.size > MAX ? mib + ' MiB — vượt giới hạn 10 MiB' : mib + ' MiB');
+    var uploadGo = document.getElementById('upload-go');
+    var pickLabel = document.getElementById('file-pick-label');
+    var fileCard = document.getElementById('upload-file');
+    var fileName = document.getElementById('upload-file-name');
+    var fileMeta = document.getElementById('upload-file-meta');
+    var fileClear = document.getElementById('upload-file-clear');
+    var formatSize = function (bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1048576).toFixed(2) + ' MB';
     };
+    // Picked file -> card with its full name and size; the upload button is
+    // only enabled when there is something (valid) to upload.
+    var describeFile = function (file) {
+      var tooBig = !!file && file.size > MAX;
+      if (fileCard) {
+        fileCard.hidden = !file;
+        fileCard.classList.toggle('too-big', tooBig);
+      }
+      if (file && fileName) {
+        fileName.textContent = file.name;
+        fileName.title = file.name;
+        fileMeta.textContent = formatSize(file.size) + (tooBig ? ' — vượt giới hạn 10 MB, chọn tệp khác' : ' — sẵn sàng tải lên');
+      }
+      if (pickLabel) pickLabel.textContent = file ? 'Đổi tệp' : 'Chọn tệp';
+      if (uploadGo) uploadGo.disabled = !file || tooBig;
+    };
+    describeFile(uploadInput.files && uploadInput.files[0]);
     uploadInput.addEventListener('change', function () { describeFile(uploadInput.files && uploadInput.files[0]); });
+    if (fileClear) fileClear.addEventListener('click', function () {
+      uploadInput.value = '';
+      describeFile(null);
+    });
 
     if (sourcesPanel && uploadForm) {
       ['dragenter', 'dragover'].forEach(function (t) {
@@ -220,6 +244,7 @@
         if (!file) return;
         uploadInput.files = e.dataTransfer.files;
         describeFile(file);
+        if (file.size > MAX) return;  // the card already explains why
         if (uploadForm.requestSubmit) uploadForm.requestSubmit(); else uploadForm.submit();
       });
     }

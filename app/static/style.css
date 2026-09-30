@@ -280,17 +280,32 @@ pre.json { background: #14231f; color: #d7ece1; padding: 18px 20px; font-size: 1
 .sources-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; padding: 0 2px; }
 .sources-head .side-title { margin: 0; }
 
+/* Three labelled, equal-height controls: pick (soft), upload (primary), options (outline). */
 .upload-row { display: flex; align-items: center; gap: 6px; }
-.upload-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 6px rgba(25, 102, 71, .22); transition: background .15s, box-shadow .15s; }
-.upload-btn:hover { background: var(--accent-hover); box-shadow: 0 2px 10px rgba(25, 102, 71, .3); }
-.upload-go { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--surface-2); color: var(--muted); cursor: pointer; }
-.upload-go:hover { background: var(--accent-soft); color: var(--accent); }
-.upload-hint { margin: 6px 2px 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-size: 11px; line-height: 1.5; }
+.upload-btn, .upload-go, .upload-more summary { display: flex; align-items: center; justify-content: center; gap: 5px; height: 32px; padding: 0 11px; border: 1px solid transparent; border-radius: 999px; font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.upload-btn { flex: 1 1 auto; background: var(--accent-soft); color: var(--accent); }
+.upload-btn:hover { background: #cfe9da; }
+.upload-go { flex: 1 1 auto; background: var(--accent); color: #fff; }
+.upload-go:hover { background: var(--accent-hover); }
+/* Disabled only by app.js until a file is picked; without JS it stays usable. */
+.upload-go:disabled { background: var(--surface-2); color: var(--muted); border-color: var(--border); cursor: not-allowed; }
 .upload-more { flex: none; position: relative; }
-.upload-more summary { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: var(--muted); cursor: pointer; list-style: none; }
+.upload-more summary { list-style: none; background: var(--surface); color: var(--text); border-color: var(--border-strong); }
 .upload-more summary::-webkit-details-marker { display: none; }
-.upload-more summary:hover { background: var(--surface-2); }
-.upload-more[open] summary { background: var(--accent-soft); color: var(--accent); }
+.upload-more summary:hover { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
+.upload-more[open] summary { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+/* The picked file, shown before upload: readable name, size, and a way to unpick it. */
+.upload-file { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 10px 6px 10px 12px; background: var(--accent-soft); border: 1px solid #b9dcc8; border-radius: var(--radius-sm); }
+.upload-file[hidden] { display: none; }
+.upload-file-icon { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--surface); color: var(--accent); }
+.upload-file-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.upload-file-name { font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.upload-file-meta { font-size: 12px; color: var(--muted); }
+.upload-file.too-big { background: var(--danger-soft); border-color: #efc2b8; }
+.upload-file.too-big .upload-file-icon, .upload-file.too-big .upload-file-meta { color: var(--danger); }
+.upload-file-clear { flex: none; width: 28px; height: 28px; }
+.upload-hint { margin: 8px 2px 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; color: var(--muted); }
 .upload-more .stack.tight { position: absolute; top: 38px; right: 0; z-index: 5; width: 240px; gap: 10px; padding: 14px; background: var(--surface); border-radius: var(--radius-sm); box-shadow: var(--shadow-lift); }
 .upload-more .field { font-size: 12px; }
 
