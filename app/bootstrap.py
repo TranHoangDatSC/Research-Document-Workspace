@@ -60,6 +60,47 @@ def initialize_postgres():
             )
         """)
 
+        # Self-service accounts: email for password reset (nullable — accounts
+        # made before this have none), unique regardless of letter case.
+        connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(254)")
+        connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key ON users (lower(email))")
+        # Only a SHA-256 of each reset token is stored: a database leak doesn't
+        # hand out working reset links.
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                token_hash CHAR(64) PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Session revocation: cookies carry this counter; bumping it ends them.
+        connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0")
+        # Email verification. Accounts that existed before were made by an
+        # admin, so they count as verified (DEFAULT true fills them); every
+        # account created from now on starts unverified (SET DEFAULT false).
+        connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true")
+        connection.execute("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT false")
+        # The token table also holds email-verification tokens now.
+        connection.execute("ALTER TABLE password_reset_tokens ADD COLUMN IF NOT EXISTS purpose VARCHAR(10) NOT NULL DEFAULT 'reset'")
+        # Settings admins change at runtime (e.g. whether sign-up is open).
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key VARCHAR(50) PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Per-user data: every project has an owner and only the owner sees it.
+        # Nullable so this ALTER works on existing rows; assign_unowned_projects()
+        # gives those to the first admin once accounts exist.
+        connection.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS projects_owner_id_idx ON projects(owner_id)")
+
 
 def initialize_mongodb():
     with mongo_client() as client:
@@ -89,8 +130,11 @@ def check_postgres():
             FROM documents LIMIT 0
         """)
         connection.execute(
-            "SELECT id, username, role, is_active, created_at FROM users LIMIT 0"
+            "SELECT id, username, email, email_verified, role, is_active, session_version, created_at FROM users LIMIT 0"
         )
+        connection.execute("SELECT key, value FROM app_settings LIMIT 0")
+        connection.execute("SELECT owner_id FROM projects LIMIT 0")
+        connection.execute("SELECT token_hash, user_id, expires_at, used_at, purpose FROM password_reset_tokens LIMIT 0")
 
 
 def check_mongodb():
@@ -132,10 +176,45 @@ def seed_admin_user():
             print(f"Admin seed: '{username}' already exists, skipped", flush=True)
             return
         connection.execute(
-            "INSERT INTO users (id, username, password_hash, role) VALUES (%s, %s, %s, 'admin')",
+            "INSERT INTO users (id, username, password_hash, role, email_verified) VALUES (%s, %s, %s, 'admin', true)",
             (uuid4(), username, auth.hash_password(password)),
         )
     print(f"Admin seed: created admin '{username}'", flush=True)
+
+
+def assign_unowned_projects():
+    """Projects created before per-user ownership go to the oldest admin, so
+    they don't silently vanish from everyone's view. Idempotent."""
+    with postgres_connection() as connection:
+        admin = connection.execute(
+            "SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
+        ).fetchone()
+        if admin is None:
+            print("Project owners: no admin yet, unowned projects stay hidden", flush=True)
+            return
+        moved = connection.execute(
+            "UPDATE projects SET owner_id = %s WHERE owner_id IS NULL", (admin[0],)
+        ).rowcount
+    if moved:
+        print(f"Project owners: {moved} existing project(s) assigned to the first admin", flush=True)
+
+
+SECRET_SETTINGS = ("SESSION_SECRET", "ADMIN_PASSWORD", "POSTGRES_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD", "MINIO_ROOT_PASSWORD")
+
+
+def check_secrets():
+    """Placeholder or short secrets: a warning locally, a refusal to start in
+    production (APP_BASE_URL on https) — a forgotten REPLACE_WITH_… on a
+    public VPS means anyone can forge session cookies or log in as admin."""
+    problems = [name for name in SECRET_SETTINGS if "REPLACE_WITH" in os.environ.get(name, "")]
+    if len(os.environ.get("SESSION_SECRET", "")) < 32:
+        problems.append("SESSION_SECRET (< 32 ký tự)")
+    if not problems:
+        return
+    message = "Secrets: chưa đổi giá trị mẫu / quá yếu: " + ", ".join(problems)
+    if os.environ.get("APP_BASE_URL", "").startswith("https://"):
+        raise SystemExit(message + " — từ chối khởi động trên production")
+    print("WARNING " + message + " (chấp nhận được khi chạy local)", flush=True)
 
 
 def initialize_with_retry(name, initialize, check):
@@ -157,10 +236,12 @@ def initialize_with_retry(name, initialize, check):
 
 
 if __name__ == "__main__":
+    check_secrets()
     initialize_with_retry(
         "PostgreSQL", initialize_postgres, check_postgres
     )
     seed_admin_user()
+    assign_unowned_projects()
     initialize_with_retry(
         "MongoDB", initialize_mongodb, check_mongodb
     )
