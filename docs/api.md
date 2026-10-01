@@ -14,6 +14,27 @@ và giữ cookie qua các request tiếp theo (ví dụ `http.cookiejar` trong P
 xem `tests/integration/_auth_helper.py`). Chi tiết tài khoản/role:
 [ke-hoach-nang-cap.md](ke-hoach-nang-cap.md#5-đăng-nhập--đã-triển-khai-đảo-quyết-định-so-với-bản-đầu).
 
+### Tài khoản tự phục vụ và dữ liệu riêng
+
+| Trang | Ý nghĩa |
+| --- | --- |
+| `GET/POST /signup` | Tự đăng ký (role `user`, bắt buộc email). **Đóng mặc định** — admin mở ở trang Quản lý người dùng; `ALLOW_SIGNUP=false` khóa cứng → 403 |
+| `GET /verify-email?token=…` | Xác minh email (48 giờ, một lần). Chưa xác minh thì chưa đăng nhập được |
+| `GET/POST /verify-email/resend` | Gửi lại email xác minh (câu trả lời như nhau dù email có tồn tại) |
+| `GET/POST /forgot-password` | Gửi link đặt lại mật khẩu (60 phút, một lần) |
+| `GET/POST /reset-password?token=…` | Đặt mật khẩu mới; đăng xuất mọi phiên; cũng tính là đã xác minh email |
+| `GET /account`, `POST /account/password`, `POST /account/logout-everywhere` | Đổi mật khẩu (đăng xuất các thiết bị khác), đăng xuất mọi thiết bị |
+| `POST /admin/settings/signup`, `POST /admin/users/{id}/verify` | Admin mở/đóng đăng ký, xác minh email hộ |
+
+- **Dữ liệu tách theo tài khoản**: mọi truy vấn dự án/tài liệu/chat chỉ thấy
+  dự án của người đang đăng nhập (cả admin); của người khác trả `404`.
+- **Thu hồi phiên**: cookie mang `session_version`, đối chiếu DB mỗi request.
+  Đổi/đặt lại mật khẩu, khóa tài khoản, đổi role, "đăng xuất mọi thiết bị" →
+  cookie cũ hết hiệu lực ngay. Role luôn đọc từ DB.
+- **Email**: SMTP trong `.env`; chưa cấu hình thì nội dung (kèm link) ghi vào
+  log. Link dựng từ `APP_BASE_URL`, không từ header `Host`.
+- Rà soát bảo mật đầy đủ: [security.md](security.md).
+
 ## Endpoint
 
 | Method | Path | Kết quả |
@@ -95,8 +116,20 @@ văn bản (`app/extractors.py`, hàm thuần không I/O) rồi ghi đè trườ
 `pdf_text` (.pdf), `docx_text` (.docx), `xlsx_text` (.xlsx; mỗi sheet mở đầu
 bằng `--- Sheet: tên ---`) hoặc `pptx_text` (.pptx; mỗi slide mở
 đầu bằng `--- Slide N ---`, ghi chú người trình bày có tiền tố `Ghi chú:`).
-`.md/.csv/.json` cũng là `plain_text`. Ảnh, âm thanh, video, zip trả 422 ngay,
-không tải file từ MinIO. Văn bản lưu tối đa 200 000 ký tự;
+`.md/.csv/.json` cũng là `plain_text`. `.zip` là `zip_text`: danh sách tệp bên
+trong rồi văn bản của từng tệp đọc được (không mở zip lồng nhau; giải nén có
+trần 20 MiB/tệp, 50 MiB tổng).
+
+Ảnh, âm thanh, video ("Phân tích bằng AI"): stream từ MinIO lên Gemini Files
+API, model trả về chữ trong ảnh + mô tả, hoặc transcript có mốc thời gian (+
+diễn biến hình ảnh với video); `method` là `gemini_image|gemini_audio|gemini_video`
+kèm `model`. Bản sao trên Google bị xóa ngay sau đó. Cần `LLM_PROVIDER=gemini`;
+tắt bằng `AI_MEDIA_ANALYSIS=false`; tệp lớn hơn `AI_MEDIA_MAX_MB` (mặc định
+200) → 422 mà không gửi gì.
+
+Tài liệu, trình chiếu, dữ liệu, zip được **tự trích xuất ngay khi tải lên**
+(lỗi thì tải lên vẫn thành công, bấm nút để thử lại); ảnh/âm thanh/video chỉ
+phân tích khi người dùng bấm (tốn hạn mức API, gửi dữ liệu ra ngoài). Văn bản lưu tối đa 200 000 ký tự;
 vượt quá thì `truncated: true` và chỉ phần đã lưu được tính vào
 `character_count`/`word_count`.
 

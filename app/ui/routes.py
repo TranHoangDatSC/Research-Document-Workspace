@@ -1,5 +1,7 @@
 """Server-rendered UI. Calls shared Python services, never loopback HTTP."""
 import json
+import logging
+import os
 import time
 from pathlib import Path
 from typing import Annotated
@@ -10,7 +12,7 @@ from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPExcep
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
-from app import auth as core_auth, file_types, llm
+from app import auth as core_auth, file_types, llm, mailer, ratelimit
 from app.api.health import health_ready
 from app.schemas.projects import ProjectCreate
 from app.services import auth as auth_service, projects, documents, rag as rag_service
@@ -51,18 +53,152 @@ def render(request, name, status_code=200, **context):
 def error_page(request, status, message):
     return render(request, "error.html", status, status=status, message=message)
 
+# ----- account pages (public: no login needed) -----
+
+def auth_page(request, name, status_code=200, headers=None, **context):
+    """Login / sign-up / password pages: errors are shown on the same form
+    (with what was typed), never as the generic error page."""
+    context.setdefault("error", "")
+    context.setdefault("notice", "")
+    context.setdefault("signup_enabled", auth_service.signup_enabled())
+    return templates.TemplateResponse(request=request, name=name, context=context, status_code=status_code, headers=headers)
+
+def is_https(request):
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+def start_session(request, user, to="/"):
+    response = RedirectResponse(to, status_code=303)
+    response.set_cookie(
+        core_auth.SESSION_COOKIE, auth_service.session_token(user), max_age=core_auth.SESSION_MAX_AGE_SECONDS,
+        httponly=True, samesite="lax", secure=is_https(request),  # never sent over plain http in production
+    )
+    return response
+
+def email_link_base(request):
+    """Base URL for emailed links. Must come from APP_BASE_URL when mail is
+    really sent: building it from the request's Host header would let anyone
+    trigger an email whose link points at their own site. None = don't send."""
+    configured = os.environ.get("APP_BASE_URL", "").strip()
+    if configured:
+        return configured
+    if mailer.configured():
+        logging.getLogger("uvicorn.error").error("email_link_skipped reason=APP_BASE_URL-not-set-while-SMTP-configured")
+        return None
+    return str(request.base_url)
+
+LOGIN_NOTICES = {
+    "reset": "Đã đổi mật khẩu. Đăng nhập bằng mật khẩu mới.",
+    "verified": "Đã xác minh email. Bạn có thể đăng nhập.",
+    "signed-out": "Đã đăng xuất khỏi mọi thiết bị.",
+}
+
 @router.get("/login")
-def login_page(request: Request):
-    return templates.TemplateResponse(request=request, name="login.html", context={"error": ""})
+def login_page(request: Request, done: str = ""):
+    return auth_page(request, "login.html", notice=LOGIN_NOTICES.get(done, ""))
 
 @router.post("/login")
 def login(request: Request, username: Annotated[str, Form(max_length=50)] = "", password: Annotated[str, Form(max_length=200)] = ""):
+    try:
+        ratelimit.check("login", request)
+    except HTTPException as exc:
+        return auth_page(request, "login.html", exc.status_code, exc.headers, error=exc.detail, username=username)
     user = auth_service.authenticate(username.strip(), password)
     if user is None:
-        return templates.TemplateResponse(request=request, name="login.html", status_code=401, context={"error": "Sai username hoặc mật khẩu, hoặc tài khoản đã bị khóa."})
-    token = core_auth.create_session_token(user["id"], user["username"], user["role"])
-    response = RedirectResponse("/", status_code=303)
-    response.set_cookie(core_auth.SESSION_COOKIE, token, max_age=core_auth.SESSION_MAX_AGE_SECONDS, httponly=True, samesite="lax")
+        return auth_page(request, "login.html", 401, error="Sai username hoặc mật khẩu, hoặc tài khoản đã bị khóa.", username=username)
+    if not user["email_verified"]:
+        # Only said after the right password, so it reveals nothing new.
+        return auth_page(request, "login.html", 403, username=username, unverified_email=user["email"],
+                         error="Tài khoản chưa xác minh email. Mở liên kết trong email đăng ký, hoặc gửi lại email xác minh.")
+    return start_session(request, user)
+
+@router.get("/signup")
+def signup_page(request: Request):
+    if not auth_service.signup_enabled():
+        return auth_page(request, "signup.html", 403, error="Đăng ký tài khoản đang đóng. Liên hệ quản trị viên để được cấp tài khoản.")
+    return auth_page(request, "signup.html")
+
+@router.post("/signup")
+def signup(request: Request, username: Annotated[str, Form(max_length=50)] = "", email: Annotated[str, Form(max_length=254)] = "", password: Annotated[str, Form(max_length=200)] = "", password_confirm: Annotated[str, Form(max_length=200)] = ""):
+    try:
+        ratelimit.check("signup", request)
+        user = auth_service.register(username.strip(), email, password, password_confirm, email_link_base(request))
+    except HTTPException as exc:
+        return auth_page(request, "signup.html", exc.status_code, exc.headers, error=exc.detail, username=username, email=email)
+    # No session yet: the account works once the emailed link is opened.
+    return auth_page(request, "signup.html", 201, sent=True, email=user["email"])
+
+@router.get("/verify-email")
+def verify_email(request: Request, token: str = Query(default="", max_length=200)):
+    if auth_service.verify_email(token):
+        return RedirectResponse("/login?done=verified", status_code=303)
+    return auth_page(request, "verify_email.html", 400, invalid=True)
+
+@router.get("/verify-email/resend")
+def resend_verification_page(request: Request, email: str = Query(default="", max_length=254)):
+    return auth_page(request, "verify_email.html", email=email)
+
+@router.post("/verify-email/resend")
+def resend_verification(request: Request, email: Annotated[str, Form(max_length=254)] = ""):
+    try:
+        ratelimit.check("verify-resend", request)
+    except HTTPException as exc:
+        return auth_page(request, "verify_email.html", exc.status_code, exc.headers, error=exc.detail, email=email)
+    auth_service.resend_verification(email, email_link_base(request))
+    return auth_page(request, "verify_email.html", sent=True, email=email)
+
+@router.get("/forgot-password")
+def forgot_password_page(request: Request):
+    return auth_page(request, "forgot_password.html")
+
+@router.post("/forgot-password")
+def forgot_password(request: Request, email: Annotated[str, Form(max_length=254)] = ""):
+    try:
+        ratelimit.check("forgot-password", request)
+    except HTTPException as exc:
+        return auth_page(request, "forgot_password.html", exc.status_code, exc.headers, error=exc.detail, email=email)
+    base = email_link_base(request)
+    if base is not None:
+        auth_service.request_password_reset(email, base)
+    # Same answer whether or not the email has an account.
+    return auth_page(request, "forgot_password.html", sent=True, email=email)
+
+@router.get("/reset-password")
+def reset_password_page(request: Request, token: str = Query(default="", max_length=200)):
+    user = auth_service.reset_token_user(token)
+    return auth_page(request, "reset_password.html", token=token, valid=user is not None, username=user["username"] if user else "")
+
+@router.post("/reset-password")
+def reset_password(request: Request, token: Annotated[str, Form(max_length=200)] = "", password: Annotated[str, Form(max_length=200)] = "", password_confirm: Annotated[str, Form(max_length=200)] = ""):
+    try:
+        ratelimit.check("reset-password", request)
+        auth_service.reset_password(token, password, password_confirm)
+    except HTTPException as exc:
+        return auth_page(request, "reset_password.html", exc.status_code, exc.headers, error=exc.detail, token=token, valid=exc.status_code != 400)
+    return RedirectResponse("/login?done=reset", status_code=303)
+
+# ----- signed-in account page -----
+
+@router.get("/account")
+def account_page(request: Request, changed: str = ""):
+    account = auth_service.get_account(current_user_id(request))
+    notice = "Đã đổi mật khẩu. Các thiết bị khác đã bị đăng xuất." if changed else ""
+    return render(request, "account.html", account=account, notice=notice, error="")
+
+@router.post("/account/password")
+def change_password(request: Request, current_password: Annotated[str, Form(max_length=200)] = "", password: Annotated[str, Form(max_length=200)] = "", password_confirm: Annotated[str, Form(max_length=200)] = ""):
+    try:
+        user = auth_service.change_password(current_user_id(request), current_password, password, password_confirm)
+    except HTTPException as exc:
+        account = auth_service.get_account(current_user_id(request))
+        return render(request, "account.html", exc.status_code, account=account, notice="", error=exc.detail)
+    # Every session was revoked by the change; keep this device signed in.
+    return start_session(request, user, "/account?changed=1")
+
+@router.post("/account/logout-everywhere")
+def logout_everywhere(request: Request):
+    auth_service.logout_everywhere(current_user_id(request))
+    response = RedirectResponse("/login?done=signed-out", status_code=303)
+    response.delete_cookie(core_auth.SESSION_COOKIE)
     return response
 
 @router.post("/logout")
@@ -131,7 +267,7 @@ def project_page(request: Request, project_id: UUID, offset: int = Query(default
     project = projects.get_project(project_id)
     return render(
         request, "project_detail.html", project=project, active_project_id=project["id"],
-        kind_totals=documents.kind_totals(project_id), rag_models=llm.available_models(),
+        kind_totals=documents.kind_totals(project_id), ai_ready=documents.ai_ready_count(project_id), rag_models=llm.available_models(),
         chat_messages=chat_history(request, project_id), **sources_context(project_id, offset, q, kind),
     )
 
