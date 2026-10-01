@@ -31,7 +31,7 @@
 
 <div class="tabs" role="tablist" aria-label="Chế độ xem" id="doc-tabs" hidden>
   <button type="button" role="tab" id="tab-info" aria-controls="pane-info" aria-selected="true">{{ icon('info', 15) }}Thông tin</button>
-  <button type="button" role="tab" id="tab-extract" aria-controls="pane-extract" aria-selected="false" tabindex="-1">{{ icon('book', 15) }}Văn bản trích xuất</button>
+  <button type="button" role="tab" id="tab-extract" aria-controls="pane-extract" aria-selected="false" tabindex="-1">{{ icon('sparkles' if kind.needs_ai else 'book', 15) }}{{ 'Nội dung AI đọc' if kind.needs_ai else 'Văn bản trích xuất' }}</button>
   <button type="button" role="tab" id="tab-json" aria-controls="pane-json" aria-selected="false" tabindex="-1">{{ icon('braces', 15) }}JSON (MongoDB)</button>
 </div>
 
@@ -75,19 +75,24 @@
 <div id="pane-extract" role="tabpanel" aria-labelledby="tab-extract" class="pane">
   <section class="card">
     <div class="card-head">
-      <h2>Văn bản trích xuất</h2>
-      {% if kind.extractable %}
-      <form method="post" action="/ui/documents/{{ document.id }}/extract" data-inline-extract>
-        <button type="submit" class="btn ghost sm">{{ icon('refresh', 14) }}<span>{{ 'Trích xuất lại' if document.extracted_text else 'Trích xuất văn bản' }}</span></button>
+      <h2>{{ 'Nội dung AI đọc được' if kind.needs_ai else 'Văn bản trích xuất' }}</h2>
+      <form method="post" action="/ui/documents/{{ document.id }}/extract" data-inline-extract
+            data-busy-label="{{ 'Đang phân tích bằng AI… (video có thể mất vài phút)' if kind.needs_ai else 'Đang trích xuất…' }}">
+        <button type="submit" class="btn {{ 'primary' if kind.needs_ai and not document.extracted_text else 'ghost' }} sm">{{ icon('sparkles' if kind.needs_ai else 'refresh', 14) }}<span>
+          {%- if kind.needs_ai -%}{{ 'Phân tích lại bằng AI' if document.extracted_text else 'Phân tích bằng AI' }}
+          {%- else -%}{{ 'Trích xuất lại' if document.extracted_text else 'Trích xuất văn bản' }}{%- endif -%}
+        </span></button>
       </form>
-      {% endif %}
     </div>
     <p class="notice extract-error" hidden></p>
-    {% if not kind.extractable %}
-    <p class="muted">{{ kind.label }} không có văn bản để trích xuất, nên không dùng được khi hỏi AI. Tệp vẫn được lưu và tải về bình thường.</p>
-    {% elif document.extracted_text %}
+    {% if kind.needs_ai %}
+    <p class="muted small-text">{{ kind.label }} được gửi tới Gemini để {{ 'nhận dạng chữ và mô tả nội dung' if kind.name == 'image' else 'chép lời có mốc thời gian' ~ (' và mô tả diễn biến hình ảnh' if kind.name == 'video' else '') }}; kết quả lưu lại thành văn bản để AI dùng khi hỏi đáp. Tốn hạn mức API và tệp rời khỏi máy chủ của bạn.</p>
+    {% endif %}
+    {% if not document.extracted_text %}
+    <p class="muted">{{ 'Chưa phân tích bằng AI — AI chưa đọc được tệp này khi hỏi đáp.' if kind.needs_ai else 'Chưa trích xuất văn bản cho tài liệu này.' }}</p>
+    {% else %}
     <dl class="props">
-      <div><dt>{{ icon('info', 14) }}Phương thức</dt><dd>{{ document.extracted_text.method }}</dd></div>
+      <div><dt>{{ icon('info', 14) }}Phương thức</dt><dd>{{ document.extracted_text.method }}{% if document.extracted_text.model %} <span class="muted">({{ document.extracted_text.model }})</span>{% endif %}</dd></div>
       <div><dt>{{ icon('hash', 14) }}Số ký tự</dt><dd>{{ document.extracted_text.character_count }}{% if document.extracted_text.truncated %} <span class="muted">(đã cắt bớt)</span>{% endif %}</dd></div>
       <div><dt>{{ icon('hash', 14) }}Số từ</dt><dd>{{ document.extracted_text.word_count }}</dd></div>
       <div><dt>{{ icon('clock', 14) }}Trích xuất lúc</dt><dd>{{ document.extracted_text.extracted_at }}</dd></div>
@@ -97,8 +102,6 @@
     {% else %}
     <p class="muted">Không tìm thấy văn bản nào trong tài liệu này.</p>
     {% endif %}
-    {% else %}
-    <p class="muted">Chưa trích xuất văn bản cho tài liệu này.</p>
     {% endif %}
   </section>
 </div>

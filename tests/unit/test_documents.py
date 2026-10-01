@@ -37,7 +37,8 @@ class UploadDocumentTests(DocumentTestCase):
         self.assertEqual(document["tags"], ["cloud", "docker"])  # trimmed and de-duplicated
         self.assertEqual(document["authors"], ["Dat"])
         self.assertEqual(document["custom_metadata"], {"year": 2026})
-        self.assertIsNone(document["extracted_text"])
+        # Text documents are read right away, so the AI can use them at once.
+        self.assertEqual((document["extracted_text"]["text"], document["extracted_text"]["method"]), ("original bytes", "plain_text"))
 
     def test_api_upload_returns_201(self):
         response = self.client.post(
@@ -229,7 +230,8 @@ class ProjectOverviewTests(DocumentTestCase):
         html = self.client.get(f"/ui/projects/{self.project_id}").text
         main = html.split('id="main"', 1)[1]
         self.assertIn("<strong>24</strong><small>tệp trong dự án", main)  # not just the 20 in the sidebar
-        self.assertIn("<strong>22</strong><small>tệp có văn bản cho AI", main)
+        # 22 text files were read on upload; the video and image wait for "Phân tích bằng AI".
+        self.assertIn('<strong>22<span class="muted"> / 24</span></strong><small>tệp AI đã đọc được', main)
         self.assertIn('data-kind-filter="video"', main)
         self.assertIn("22 tệp · 220 B", main)
 
@@ -317,12 +319,16 @@ class PreviewAndStreamingTests(DocumentTestCase):
         html = self.client.get(f"/ui/documents/{document['id']}").text
         self.assertNotIn("/content", html)
 
-    def test_media_is_not_offered_to_the_ai(self):
+    def test_every_kind_can_be_offered_to_the_ai(self):
         text = self.upload_bytes("paper.txt", b"x")
         video = self.upload_bytes("clip.mp4", b"x")
         html = self.client.get(f"/ui/projects/{self.project_id}").text
         self.assertIn(f'name="document_ids" value="{text["id"]}"', html)
-        self.assertNotIn(f'name="document_ids" value="{video["id"]}"', html)
+        self.assertIn(f'name="document_ids" value="{video["id"]}"', html)
+
+    def test_media_is_not_sent_to_the_ai_on_upload(self):
+        video = self.upload_bytes("clip.mp4", b"x")
+        self.assertIsNone(video["extracted_text"])  # costs quota + leaves the server: user's call
 
 
 class UpdateDocumentTests(DocumentTestCase):

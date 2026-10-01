@@ -14,12 +14,22 @@ def sql_one(statement, params):
             return cursor.fetchone()
 
 
-def project_exists(project_id):
-    return sql_one("SELECT id FROM projects WHERE id = %s", (project_id,))
+def project_exists(project_id, owner_id):
+    """Only the owner's projects "exist" — another user's id reads as missing."""
+    return sql_one("SELECT id FROM projects WHERE id = %s AND owner_id = %s", (project_id, owner_id))
 
 
 def get_document(document_id):
+    """Unscoped: only for internal steps after ownership was already checked."""
     return sql_one(f"SELECT {FIELDS} FROM documents WHERE id = %s", (document_id,))
+
+
+def get_owned_document(document_id, owner_id):
+    return sql_one(
+        f"SELECT {', '.join('d.' + f.strip() for f in FIELDS.split(','))} FROM documents d "
+        "JOIN projects p ON p.id = d.project_id WHERE d.id = %s AND p.owner_id = %s",
+        (document_id, owner_id),
+    )
 
 
 def create_pending(document_id, project_id, filename, object_name, content_type, size):
@@ -139,3 +149,12 @@ def begin_delete(document_id):
 def finish_delete(document_id):
     with postgres_connection() as connection:
         connection.execute("DELETE FROM documents WHERE id=%s AND status='deleting'", (document_id,))
+
+
+def count_with_text(document_ids):
+    """How many of these documents have non-empty extracted text in MongoDB."""
+    with mongo_client() as client:
+        return client[os.environ["MONGO_DB"]]["document_details"].count_documents({
+            "document_id": {"$in": [str(i) for i in document_ids]},
+            "extracted_text.text": {"$nin": [None, ""]},
+        })

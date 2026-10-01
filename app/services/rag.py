@@ -144,11 +144,14 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
 
     domain = domains.current()
     chunks = rag.build_chunks(documents, domain.chunk_characters, domain.chunk_overlap)
+    # Selected but not readable yet (an image not analysed, a corrupt file):
+    # told to the person instead of being silently left out of the answer.
+    unread = [d["original_name"] for d in documents if not ((d.get("extracted_text") or {}).get("text") or "").strip()]
     if not chunks:
         raise HTTPException(
             409,
-            'Chưa có tài liệu nào trong project được trích xuất văn bản. '
-            'Vào từng tài liệu và bấm "Trích xuất văn bản" trước khi hỏi.',
+            "AI chưa đọc được tệp nào trong các tệp đã chọn. Mở từng tệp, tab \"Văn bản trích xuất\": "
+            "bấm \"Trích xuất văn bản\", hoặc \"Phân tích bằng AI\" với ảnh, âm thanh, video.",
         )
 
     total_characters = sum(len((d.get("extracted_text") or {}).get("text") or "") for d in documents)
@@ -180,6 +183,7 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
             {"ref": number, "document_id": c["document_id"], "original_name": c["original_name"], "chunk_index": c["chunk_index"]}
             for number, c in cited
         ],
+        "unread": unread,
     }
     _save_exchange(project_id, user_id, question, result)
     return result

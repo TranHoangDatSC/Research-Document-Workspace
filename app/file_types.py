@@ -22,19 +22,30 @@ class Kind:
     label: str
     icon: str
     default_limit_mb: int
-    extractable: bool = False  # has text for "Trích xuất văn bản" and AI questions
+    # How its text for AI questions is produced: "local" = parsed on this
+    # server (app/extractors.py), "ai" = read by Gemini (app/media_ai.py:
+    # OCR/description/transcript). Every kind has one now.
+    text_via: str = "local"
     preview: str | None = None  # "image" | "audio" | "video": shown inline on the document page
+
+    @property
+    def extractable(self):
+        return True
+
+    @property
+    def needs_ai(self):
+        return self.text_via == "ai"
 
 
 KINDS = {
     kind.name: kind
     for kind in (
-        Kind("document", "Tài liệu", "file", 50, extractable=True),
-        Kind("presentation", "Trình chiếu", "presentation", 100, extractable=True),
-        Kind("data", "Dữ liệu", "table", 50, extractable=True),
-        Kind("image", "Hình ảnh", "image", 25, preview="image"),
-        Kind("audio", "Âm thanh", "music", 100, preview="audio"),
-        Kind("video", "Video", "video", 500, preview="video"),
+        Kind("document", "Tài liệu", "file", 50),
+        Kind("presentation", "Trình chiếu", "presentation", 100),
+        Kind("data", "Dữ liệu", "table", 50),
+        Kind("image", "Hình ảnh", "image", 25, text_via="ai", preview="image"),
+        Kind("audio", "Âm thanh", "music", 100, text_via="ai", preview="audio"),
+        Kind("video", "Video", "video", 500, text_via="ai", preview="video"),
         Kind("archive", "Tệp nén", "archive", 200),
     )
 }

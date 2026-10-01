@@ -183,6 +183,47 @@ def build_pptx():
     return buffer.getvalue()
 
 
+def build_zip(files):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+class ZipExtractionTests(ExtractorTestCase):
+    def test_lists_everything_and_reads_what_it_can(self):
+        content = build_zip({
+            "notes/readme.txt": b"Plain text inside",
+            "slides/deck.pptx": build_pptx(),
+            "report.docx": build_docx(["Docx inside"]),
+            "photo.png": b"\x89PNG not read locally",
+            "inner.zip": build_zip({"deep.txt": b"never opened"}),
+            "broken.pdf": b"not a pdf",
+        })
+        result = extract_text(content, ".zip")
+        self.assertEqual(result.method, "zip_text")
+        self.assertIn("--- Nội dung tệp nén (6 tệp) ---", result.text)
+        for name in ("notes/readme.txt", "photo.png", "inner.zip"):
+            self.assertIn(f"- {name} (", result.text)  # listed
+        self.assertIn("Plain text inside", result.text)
+        self.assertIn("ARIMA vs LSTM", result.text)
+        self.assertIn("Docx inside", result.text)
+        self.assertNotIn("never opened", result.text)       # nested zips are not opened
+        self.assertIn("--- broken.pdf ---\n(không đọc được)", result.text)
+
+    def test_decompression_budget_stops_a_zip_bomb(self):
+        from app import extractors
+        content = build_zip({"a.txt": b"A" * 1000, "b.txt": b"B" * 1000})
+        with patch.object(extractors, "ZIP_MAX_UNCOMPRESSED", 1500):
+            text = extract_text(content, ".zip").text
+        self.assertIn("A" * 1000, text)
+        self.assertIn("--- b.txt ---\n(bỏ qua: quá lớn để đọc trong tệp nén)", text)
+
+    def test_corrupt_zip(self):
+        self.assert_extraction_error("corrupt_file", b"not a zip", ".zip")
+
+
 class PresentationAndDataExtractionTests(ExtractorTestCase):
     def test_pptx_slides_tables_and_notes(self):
         result = extract_text(build_pptx(), ".pptx")
@@ -284,27 +325,30 @@ class ExtractDocumentTests(unittest.TestCase):
         extracted = self.extract(document_id).json()["extracted_text"]
         self.assertIn("ARIMA vs LSTM", extracted["text"])
 
-    def test_media_has_no_text_and_is_never_downloaded(self):
-        for name in ("clip.mp4", "photo.png", "talk.mp3", "data.zip"):
-            with self.subTest(name=name):
-                document_id = self.upload(name, b"binary")
-                response = self.extract(document_id)
-                self.assertEqual(response.status_code, 422)
-                self.assertIn("không có văn bản", response.json()["detail"])
-        self.assertEqual(self.backend.downloads, [])
+    def test_text_files_are_extracted_on_upload(self):
+        document_id = self.upload("notes.md", "# Ghi chú\nARIMA".encode())
+        self.assertEqual(self.backend.details[document_id]["extracted_text"]["text"], "# Ghi chú\nARIMA")
+
+    def test_zip_document(self):
+        document_id = self.upload("bundle.zip", build_zip({"readme.txt": b"Inside the zip"}))
+        extracted = self.backend.details[document_id]["extracted_text"]
+        self.assertEqual(extracted["method"], "zip_text")
+        self.assertIn("Inside the zip", extracted["text"])
 
     def test_too_large_to_extract_is_refused_before_download(self):
         document_id = self.upload("big.txt", b"x" * 20)
+        self.backend.downloads.clear()  # the upload's own extraction read it once
         with patch.object(documents_service, "EXTRACT_MAX_BYTES", 10):
             response = self.extract(document_id)
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.backend.downloads, [])
 
-    def test_media_page_has_no_extract_button(self):
+    def test_media_page_offers_ai_analysis(self):
         document_id = self.upload("clip.mp4", b"x")
         html = self.client.get(f"/ui/documents/{document_id}").text
-        self.assertNotIn("data-inline-extract", html)
-        self.assertIn("Video không có văn bản để trích xuất", html)
+        self.assertIn("data-inline-extract", html)
+        self.assertIn("Phân tích bằng AI", html)
+        self.assertIn("tệp rời khỏi máy chủ của bạn", html)  # the privacy trade-off is stated
 
     def test_not_ready_document_is_409(self):
         document_id = self.upload("a.txt", b"hello")
@@ -318,7 +362,7 @@ class ExtractDocumentTests(unittest.TestCase):
                 self.backend.fail = {store}
                 self.assertEqual(self.extract(document_id).status_code, 503)
         self.backend.fail = set()
-        self.assertIsNone(self.backend.details[document_id]["extracted_text"])
+        self.assertEqual(self.backend.details[document_id]["extracted_text"]["text"], "hello")  # from upload, untouched
 
 
 if __name__ == "__main__":

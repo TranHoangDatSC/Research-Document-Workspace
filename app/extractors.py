@@ -1,7 +1,9 @@
 """Pure text extraction: no database, storage, network, or logging."""
 
 import io
+import zipfile
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from docx import Document
 from openpyxl import load_workbook
@@ -124,6 +126,50 @@ def _extract_xlsx(content: bytes) -> tuple[str, str]:
     return text, "xlsx_text"
 
 
+ZIP_MAX_MEMBERS_LISTED = 500
+ZIP_MAX_UNCOMPRESSED = 50 * 1024 * 1024  # zip-bomb guard: total bytes ever decompressed
+ZIP_MAX_MEMBER = 20 * 1024 * 1024
+
+
+def _extract_zip(content: bytes) -> tuple[str, str]:
+    """A listing of everything inside, then the text of each member this
+    module can read (documents, slides, sheets, data) — nested zips, media
+    and encrypted members are listed but not opened. Decompression is
+    capped (per member and in total), so a zip bomb just stops early."""
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+        members = [m for m in archive.infolist() if not m.is_dir()]
+    except (zipfile.BadZipFile, OSError, ValueError):
+        raise ExtractionError("corrupt_file") from None
+
+    listing = [f"- {m.filename} ({m.file_size} bytes)" for m in members[:ZIP_MAX_MEMBERS_LISTED]]
+    if len(members) > ZIP_MAX_MEMBERS_LISTED:
+        listing.append(f"- … và {len(members) - ZIP_MAX_MEMBERS_LISTED} tệp khác")
+    sections = [f"--- Nội dung tệp nén ({len(members)} tệp) ---\n" + "\n".join(listing)]
+
+    budget = ZIP_MAX_UNCOMPRESSED
+    for member in members:
+        suffix = PurePosixPath(member.filename).suffix.lower()
+        if suffix not in _EXTRACTORS or suffix == ".zip" or member.flag_bits & 0x1:  # 0x1 = encrypted
+            continue
+        if member.file_size > min(ZIP_MAX_MEMBER, budget):
+            sections.append(f"--- {member.filename} ---\n(bỏ qua: quá lớn để đọc trong tệp nén)")
+            continue
+        try:
+            with archive.open(member) as handle:
+                data = handle.read(member.file_size + 1)  # never trust the declared size beyond +1
+            if len(data) > member.file_size:
+                raise ExtractionError("corrupt_file")
+            budget -= len(data)
+            text, _ = _EXTRACTORS[suffix](data)
+        except (ExtractionError, zipfile.BadZipFile, OSError, RuntimeError, ValueError):
+            sections.append(f"--- {member.filename} ---\n(không đọc được)")
+            continue
+        if text.strip():
+            sections.append(f"--- {member.filename} ---\n{text.strip()}")
+    return "\n\n".join(sections), "zip_text"
+
+
 _EXTRACTORS = {
     ".txt": _extract_txt,
     ".md": _extract_txt,
@@ -134,6 +180,7 @@ _EXTRACTORS = {
     ".pptx": _extract_pptx,
     ".xlsx": _extract_xlsx,
 }
+_EXTRACTORS[".zip"] = _extract_zip  # after the dict: _extract_zip looks members up in it
 
 
 def _finalize(text: str, method: str, max_characters: int) -> ExtractionResult:
@@ -182,3 +229,9 @@ def extract_text(
 
     text, method = extractor(content)
     return _finalize(text, method, max_characters)
+
+
+def from_text(text: str, method: str) -> ExtractionResult:
+    """Same normalising, counting and truncation as extract_text, for text
+    produced elsewhere (e.g. Gemini reading an image or a video)."""
+    return _finalize(text, method, MAX_EXTRACTED_CHARACTERS)

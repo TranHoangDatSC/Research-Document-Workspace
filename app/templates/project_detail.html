@@ -22,11 +22,10 @@
 </div>
 
 {% set total_count = kind_totals|sum(attribute='count') %}
-{% set ai_count = kind_totals|selectattr('kind.extractable')|sum(attribute='count') %}
 <section class="stat-row" aria-label="Thống kê dự án">
   <div class="stat-card"><span class="stat-icon">{{ icon('file', 18) }}</span><div><strong>{{ total_count }}</strong><small>tệp trong dự án</small></div></div>
   <div class="stat-card"><span class="stat-icon">{{ icon('drive', 18) }}</span><div><strong>{{ kind_totals|sum(attribute='size_bytes')|filesize }}</strong><small>tổng dung lượng</small></div></div>
-  <div class="stat-card"><span class="stat-icon">{{ icon('sparkles', 18) }}</span><div><strong>{{ ai_count }}</strong><small>tệp có văn bản cho AI</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('sparkles', 18) }}</span><div><strong>{{ ai_ready if ai_ready is not none else '?' }}<span class="muted"> / {{ total_count }}</span></strong><small>tệp AI đã đọc được</small></div></div>
 </section>
 
 {% if kind_totals %}

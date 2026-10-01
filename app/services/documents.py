@@ -14,7 +14,7 @@ import psycopg
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from app import file_types
+from app import access, extractors, file_types, media_ai
 from app.bootstrap import bucket_name
 from app.extractors import MAX_INPUT_BYTES as EXTRACT_MAX_BYTES, ExtractionError, extract_text
 from app.repositories import documents as repository
@@ -37,7 +37,7 @@ def storage_error(stage, exc, document_id=None):
 
 def require_project(project_id):
     try:
-        row = repository.project_exists(project_id)
+        row = repository.project_exists(project_id, access.user_id())
     except psycopg.Error as exc:
         raise storage_error("read-project", exc) from None
     if row is None:
@@ -46,7 +46,7 @@ def require_project(project_id):
 
 def document_row(document_id):
     try:
-        row = repository.get_document(document_id)
+        row = repository.get_owned_document(document_id, access.user_id())
     except psycopg.Error as exc:
         raise storage_error("read-document", exc, document_id) from None
     if row is None:
@@ -179,6 +179,15 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
             compensate(document_id, object_name, object_attempted, mongo_attempted)
         raise storage_error("upload", exc, document_id) from None
     log.info("document_uploaded document_id=%s project_id=%s kind=%s size_bytes=%s", document_id, project_id, kind.name, size)
+    # Read the text right away when it's local and cheap, so the AI can use
+    # the file at once. Images/audio/video wait for "Phân tích bằng AI": that
+    # costs API quota and sends the file to Google, so it's the user's call.
+    # A failure here never fails the upload — the button can retry it.
+    if not kind.needs_ai and size <= EXTRACT_MAX_BYTES:
+        try:
+            return extract_document(document_id)
+        except HTTPException as exc:
+            log.info("auto_extract_skipped document_id=%s status=%s", document_id, exc.status_code)
     return {**row, **details}
 
 
@@ -195,6 +204,17 @@ def list_documents(project_id, limit=20, offset=0, query=None, kind=None):
         return repository.list_documents(project_id, limit, offset, (query or "").strip() or None, extensions)
     except psycopg.Error as exc:
         raise storage_error("list-documents", exc) from None
+
+
+def ai_ready_count(project_id):
+    """Ready documents whose text the AI can read (extracted, non-empty).
+    None when MongoDB can't be asked — the overview shows that instead of a wrong 0."""
+    try:
+        ids = [d["id"] for d in repository.list_all_documents(project_id) if d["status"] == "ready"]
+        return repository.count_with_text(ids) if ids else 0
+    except Exception as exc:
+        log.warning("document stage=ai-ready-count error=%s", type(exc).__name__)
+        return None
 
 
 def kind_totals(project_id):
@@ -329,6 +349,13 @@ def delete_document(document_id):
     No cross-store atomicity is claimed; readers reject deleting documents.
     """
     try:
+        # Ownership first: begin_delete itself is unscoped. Someone else's
+        # document reads as missing (404); one that is truly gone stays a
+        # successful no-op so a retried delete is still idempotent.
+        if repository.get_owned_document(document_id, access.user_id()) is None:
+            if repository.get_document(document_id) is not None:
+                raise HTTPException(404, "Document not found")
+            return {"document_id": str(document_id), "deleted": True}
         row = repository.begin_delete(document_id)
         if row is None:
             current = repository.get_document(document_id)
@@ -364,24 +391,58 @@ def update_metadata(document_id, tags="", authors="", custom_metadata="{}"):
     return get_document(document_id)
 
 
+class _ObjectStream:
+    """MinIO object as a plain readable stream that releases its connection."""
+
+    def __init__(self, row):
+        self.response = minio_client().get_object(bucket_name(), row["object_name"])
+
+    def read(self, size=-1):
+        return self.response.read(size)
+
+    def close(self):
+        self.response.close()
+        self.response.release_conn()
+
+
+def _text_by_ai(row, kind):
+    """Image/audio/video -> text via Gemini (app/media_ai.py), streamed from MinIO."""
+    def open_stream():
+        try:
+            return _ObjectStream(row)
+        except Exception as exc:
+            raise storage_error("ai-extract-download", exc, row["id"]) from None
+
+    try:
+        text, model = media_ai.analyze(kind.name, open_stream, row["size_bytes"], row["content_type"], row["original_name"])
+    except media_ai.MediaAIError as exc:
+        log.warning("media_ai_failed document_id=%s error=%s", row["id"], exc.message)
+        raise HTTPException(exc.status, exc.message) from None
+    return extractors.from_text(text, f"gemini_{kind.name}"), model
+
+
 def extract_document(document_id):
-    """Re-runnable: downloads the stored file, extracts text, overwrites MongoDB."""
+    """Re-runnable: reads the stored file, turns it into text, overwrites
+    MongoDB. Documents, slides, sheets, data and zips are parsed here; images,
+    audio and video are read by Gemini (OCR, description, transcript)."""
     row = document_row(document_id)
     require_ready(row)
-    # Decided before downloading anything: no point pulling a 500 MiB video
-    # out of MinIO to find out it has no text.
     kind = file_types.kind_of(row["object_name"])
-    if kind is None or not kind.extractable:
-        raise HTTPException(422, f"{kind.label if kind else 'Loại tệp này'} không có văn bản để trích xuất")
-    if row["size_bytes"] > EXTRACT_MAX_BYTES:
-        raise HTTPException(422, f"Tệp quá {EXTRACT_MAX_BYTES // (1024 * 1024)} MiB, không trích xuất văn bản được (vẫn tải về và lưu bình thường)")
-    payload = read_object(row, "extract-download")
-    suffix = file_types.suffix_of(row["object_name"])
-    try:
-        result = extract_text(payload, suffix)
-    except ExtractionError as exc:
-        log.info("extraction_rejected document_id=%s code=%s", document_id, exc.code)
-        raise HTTPException(422, f"Text extraction failed: {exc.code}") from None
+    if kind is None:
+        raise HTTPException(422, "Loại tệp này không trích xuất được văn bản")
+    model = None
+    if kind.needs_ai:
+        result, model = _text_by_ai(row, kind)
+    else:
+        # Decided before downloading: local parsers hold the whole file in memory.
+        if row["size_bytes"] > EXTRACT_MAX_BYTES:
+            raise HTTPException(422, f"Tệp quá {EXTRACT_MAX_BYTES // (1024 * 1024)} MiB, không trích xuất văn bản được (vẫn tải về và lưu bình thường)")
+        payload = read_object(row, "extract-download")
+        try:
+            result = extract_text(payload, file_types.suffix_of(row["object_name"]))
+        except ExtractionError as exc:
+            log.info("extraction_rejected document_id=%s code=%s", document_id, exc.code)
+            raise HTTPException(422, f"Text extraction failed: {exc.code}") from None
 
     extracted = {
         "text": result.text,
@@ -390,6 +451,7 @@ def extract_document(document_id):
         "word_count": result.word_count,
         "truncated": result.truncated,
         "extracted_at": datetime.now(timezone.utc).isoformat(),
+        **({"model": model} if model else {}),
     }
     try:
         repository.update_extracted_text(document_id, extracted)

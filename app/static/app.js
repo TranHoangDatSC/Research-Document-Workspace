@@ -378,7 +378,7 @@
       var pane = form.closest('[role="tabpanel"]');
       var errorBox = pane.querySelector('.extract-error');
       button.disabled = true;
-      label.textContent = 'Đang trích xuất…';
+      label.textContent = form.getAttribute('data-busy-label') || 'Đang trích xuất…';
       if (errorBox) errorBox.hidden = true;
       fetch(form.action, { method: 'POST', headers: { Accept: 'text/html' } })
         .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
@@ -398,7 +398,7 @@
         })
         .catch(function (err) {
           button.disabled = false;
-          label.textContent = 'Thử trích xuất lại';
+          label.textContent = 'Thử lại';
           if (errorBox) {
             // TypeError = fetch itself failed (network), its message is browser English.
             errorBox.textContent = (err instanceof TypeError || !err.message) ? 'Không kết nối được máy chủ, thử lại sau.' : err.message;
@@ -516,6 +516,13 @@
         modelP.className = 'chat-model muted small-text';
         modelP.textContent = 'Mô hình: ' + data.model;
         body.appendChild(modelP);
+      }
+      if (data.unread && data.unread.length) {
+        var unreadP = document.createElement('p');
+        unreadP.className = 'chat-unread small-text';
+        unreadP.textContent = 'AI chưa đọc được ' + data.unread.length + ' tệp đã chọn: ' + data.unread.join(', ') +
+          '. Mở tệp, tab "Văn bản trích xuất" để trích xuất hoặc phân tích bằng AI.';
+        body.appendChild(unreadP);
       }
     }
     function renderError(bubble, message) {
