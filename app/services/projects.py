@@ -2,6 +2,7 @@
 import logging
 import psycopg
 from fastapi import HTTPException
+from app import access
 from app.repositories import chats as chats_repository
 from app.repositories import documents as documents_repository
 from app.repositories import projects as repository
@@ -16,25 +17,25 @@ def call(fn, *args):
         raise HTTPException(503, "Project storage is temporarily unavailable") from None
 
 def create_project(payload):
-    row = call(repository.create_project, payload)
+    row = call(repository.create_project, payload, access.user_id())
     log.info("project_created project_id=%s", row["id"])
     return row
 
 def list_projects(limit=20, offset=0, query=None):
-    return call(repository.list_projects, limit, offset, query)
+    return call(repository.list_projects, limit, offset, query, access.user_id())
 
 def count_projects(query=None):
-    return call(repository.count_projects, query)
+    return call(repository.count_projects, query, access.user_id())
 
 def get_project(project_id):
-    row = call(repository.get_project, project_id)
+    row = call(repository.get_project, project_id, access.user_id())
     if row is None:
         raise HTTPException(404, "Project not found")
     return row
 
 def update_project(project_id, payload):
     get_project(project_id)
-    row = call(repository.update_project, project_id, payload.name, payload.description)
+    row = call(repository.update_project, project_id, payload.name, payload.description, access.user_id())
     log.info("project_updated project_id=%s", project_id)
     return row
 
@@ -55,5 +56,5 @@ def delete_project(project_id):
         # Orphaned chat messages are unreachable without the project; not
         # worth blocking the delete over.
         log.warning("chat_storage_failed stage=delete-project error=%s", type(exc).__name__)
-    call(repository.delete_project, project_id)
+    call(repository.delete_project, project_id, access.user_id())
     log.info("project_deleted project_id=%s document_count=%s", project_id, len(docs))

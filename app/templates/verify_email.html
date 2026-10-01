@@ -1,0 +1,21 @@
+{% extends "_auth_layout.html" %}
+{% block title %}Xác minh email{% endblock %}
+{% block heading %}Xác minh email{% endblock %}
+{% block body %}
+{% if invalid %}
+<p class="notice" role="alert">Liên kết xác minh không hợp lệ, đã được dùng, hoặc đã hết hạn.</p>
+{% endif %}
+{% if sent %}
+<p class="notice success" role="status">Nếu <strong>{{ email }}</strong> thuộc một tài khoản chưa xác minh, email xác minh mới vừa được gửi tới đó.</p>
+<p class="muted small-text">Không thấy email? Xem cả thư mục Spam, hoặc nhờ quản trị viên xác minh hộ.</p>
+{% else %}
+<p class="muted">Nhập email đã dùng khi đăng ký để nhận lại liên kết xác minh.</p>
+<form method="post" action="/verify-email/resend" class="stack">
+  <label class="field">Email
+    <input type="email" name="email" required maxlength="254" autocomplete="email" value="{{ email or '' }}" autofocus>
+  </label>
+  <button class="btn primary block">Gửi lại email xác minh</button>
+</form>
+{% endif %}
+<p class="auth-switch"><a href="/login">Quay lại đăng nhập</a></p>
+{% endblock %}

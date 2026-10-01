@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Tài khoản · Research Document Workspace{% endblock %}
+{% block crumbs %}<span class="crumb-current">Tài khoản &amp; bảo mật</span>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Tài khoản</p>
+  <h1>{{ account.username }}</h1>
+  <p class="muted lead">
+    {% if account.email %}{{ account.email }} ·
+      {% if account.email_verified %}<span class="badge ready">đã xác minh</span>{% else %}<span class="badge pending">chưa xác minh</span>{% endif %}
+    {% else %}Chưa có email — nhờ quản trị viên thêm để có thể tự lấy lại mật khẩu.{% endif %}
+    · <span class="badge">{{ account.role }}</span>
+  </p>
+</div>
+{% if notice %}<p class="notice success" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+
+<div class="split">
+  <section class="card">
+    <div class="card-head"><h2>Đổi mật khẩu</h2></div>
+    <form method="post" action="/account/password" class="stack">
+      <label class="field">Mật khẩu hiện tại
+        <input type="password" name="current_password" required maxlength="200" autocomplete="current-password">
+      </label>
+      <label class="field">Mật khẩu mới
+        <input type="password" name="password" required minlength="8" maxlength="200" autocomplete="new-password">
+        <small class="field-hint">Ít nhất 8 ký tự. Các thiết bị khác đang đăng nhập sẽ bị đăng xuất.</small>
+      </label>
+      <label class="field">Nhập lại mật khẩu mới
+        <input type="password" name="password_confirm" required minlength="8" maxlength="200" autocomplete="new-password">
+      </label>
+      <button class="btn primary">{{ icon('check', 16) }}Đổi mật khẩu</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Phiên đăng nhập</h2></div>
+    <p class="muted">Nghi ngờ ai đó đang dùng tài khoản của bạn, hoặc quên đăng xuất trên máy khác? Đăng xuất khỏi mọi trình duyệt và thiết bị — kể cả máy này.</p>
+    <form method="post" action="/account/logout-everywhere">
+      <button class="btn secondary">{{ icon('arrow-left', 16) }}Đăng xuất khỏi mọi thiết bị</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

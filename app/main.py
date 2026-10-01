@@ -1,13 +1,18 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+import os
+from urllib.parse import urlsplit
+
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
-from app import auth
+from app import access, auth
+from app.services import auth as auth_service
 from app.api.projects import router as projects_router
 from app.api.health import router as health_router
 from app.api.documents import router as documents_router
@@ -29,10 +34,17 @@ app.include_router(ui_router)
 app.include_router(admin_router)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
-def is_ui(request):
-    return request.url.path == "/" or request.url.path.startswith("/ui/")
+HTML_PREFIXES = ("/ui/", "/account", "/admin")
 
-PUBLIC_PATHS = {"/login", "/health/live", "/health/ready", "/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"}
+def is_ui(request):
+    """Browser pages: errors render as HTML, a missing login redirects."""
+    path = request.url.path
+    return path == "/" or path.startswith(HTML_PREFIXES)
+
+# Public account pages (no login). /docs, /redoc and /openapi.json are NOT
+# public: the API map is for signed-in users, not for anyone on the internet.
+ACCOUNT_FORMS = {"/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/verify-email/resend"}
+PUBLIC_PATHS = {*ACCOUNT_FORMS, "/health/live", "/health/ready"}
 
 def is_public(request):
     path = request.url.path
@@ -50,12 +62,28 @@ async def html_validation_error(request: Request, exc):
         return error_page(request, 422, "Dữ liệu không hợp lệ. Kiểm tra ID, các trường và file đã chọn.")
     return await request_validation_exception_handler(request, exc)
 
+def is_https(request):
+    # Behind Caddy uvicorn sees plain http; Caddy says what the browser used.
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+def same_site_origin(request):
+    """Origin of a form post must be this site. Compared by host only: behind
+    Caddy the browser posts from https://host while uvicorn sees http://host
+    (comparing schemes too rejected every form on the VPS)."""
+    origin = request.headers.get("origin")
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        return False
+    if not origin:
+        return True  # old browsers / non-browser clients; SameSite=Lax cookies still apply
+    host = urlsplit(origin).netloc
+    allowed = {request.headers.get("host", ""), urlsplit(os.environ.get("APP_BASE_URL", "")).netloc}
+    return host in allowed
+
 @app.middleware("http")
 async def same_origin_forms(request: Request, call_next):
-    if request.method == "POST" and request.url.path.startswith("/ui/"):
-        origin = request.headers.get("origin")
-        expected = str(request.base_url).rstrip("/")
-        if (origin and origin != expected) or request.headers.get("sec-fetch-site") == "cross-site":
+    # Account forms too: a cross-site POST to /login could sign a victim into an attacker's account.
+    if request.method == "POST" and (request.url.path.startswith(HTML_PREFIXES) or request.url.path in ACCOUNT_FORMS):
+        if not same_site_origin(request):
             return error_page(request, 403, "Biểu mẫu phải được gửi từ trang ứng dụng này.")
     return await call_next(request)
 
@@ -64,9 +92,40 @@ async def require_login(request: Request, call_next):
     if is_public(request):
         return await call_next(request)
     session = auth.verify_session_token(request.cookies.get(auth.SESSION_COOKIE))
-    if session is None:
-        if is_ui(request):
-            return RedirectResponse("/login", status_code=303)
-        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
-    request.state.user = session
-    return await call_next(request)
+    user = None
+    if session is not None:
+        # Every request is checked against the database: a locked account, a
+        # changed password or "log out everywhere" ends the session at once.
+        try:
+            user = await run_in_threadpool(auth_service.session_user, session)
+        except HTTPException as exc:
+            if is_ui(request):
+                return error_page(request, exc.status_code, str(exc.detail))
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    if user is None:
+        response = RedirectResponse("/login", status_code=303) if is_ui(request) else JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        if session is not None:
+            response.delete_cookie(auth.SESSION_COOKIE)  # revoked: don't keep sending it
+        return response
+    request.state.user = user
+    token = access.bind(user)
+    try:
+        return await call_next(request)
+    finally:
+        access.unbind(token)
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Outermost: applies to every response, error pages included."""
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    # Reset/verification tokens travel in URLs: never leak them to other sites.
+    headers.setdefault("Referrer-Policy", "same-origin")
+    headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if "content-security-policy" not in headers:
+        headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    if is_https(request):
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return response

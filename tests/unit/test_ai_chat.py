@@ -11,7 +11,9 @@ from uuid import UUID, uuid4
 
 from support import FakeBackend
 
-from app import domains, llm
+from fastapi import HTTPException
+
+from app import access, domains, llm
 from app.services import rag as rag_service
 
 FILLER = "\n\n".join(f"Filler paragraph number {i} about gardening and weather." for i in range(40))
@@ -171,17 +173,25 @@ class SaveChatHistoryTests(ChatTestCase):
 
     def test_service_without_user_keeps_no_history(self):
         self.add_document("cloud.txt", "Docker content.")
-        rag_service.ask_project(UUID(self.project_id), "q")
+        # Outside a request: act as the owner (projects are private), but pass no
+        # user_id for history -> stateless.
+        with access.acting_as(self.client.user["id"]):
+            rag_service.ask_project(UUID(self.project_id), "q")
         self.assertEqual(self.backend.chats, [])
+
+    def test_service_with_nobody_bound_refuses(self):
+        with self.assertRaises(HTTPException) as caught:
+            rag_service.ask_project(UUID(self.project_id), "q")
+        self.assertEqual(caught.exception.status_code, 401)
 
 
 class ViewChatHistoryTests(ChatTestCase):
-    def test_api_returns_only_my_conversation(self):
+    def test_api_returns_my_conversation_and_hides_it_from_others(self):
         self.add_document("cloud.txt", "Docker content.")
         self.ask("my question")
         other = self.backend.client(self, role="user", username="bob")
         self.assertEqual([m["content"] for m in self.client.get(f"/projects/{self.project_id}/chat").json()["messages"]], ["my question", "Answer [1]"])
-        self.assertEqual(other.get(f"/projects/{self.project_id}/chat").json()["messages"], [])
+        self.assertEqual(other.get(f"/projects/{self.project_id}/chat").status_code, 404)  # not bob's project
 
     def test_project_page_shows_the_conversation(self):
         self.add_document("paper.pdf", "Docker content.")
@@ -199,13 +209,15 @@ class ViewChatHistoryTests(ChatTestCase):
 
 
 class ClearChatHistoryTests(ChatTestCase):
-    def test_clear_removes_only_my_conversation(self):
+    def test_others_can_neither_ask_nor_clear(self):
         self.add_document("cloud.txt", "Docker content.")
         self.ask("mine")
         other = self.backend.client(self, role="user", username="bob")
-        other.post(f"/projects/{self.project_id}/ask", json={"question": "bob's"})
+        self.assertEqual(other.post(f"/projects/{self.project_id}/ask", json={"question": "bob's"}).status_code, 404)
+        self.assertEqual(other.delete(f"/projects/{self.project_id}/chat").status_code, 404)
+        self.assertEqual(len(self.backend.chats), 2)
         self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat").status_code, 204)
-        self.assertEqual({m["content"] for m in self.backend.chats}, {"bob's", "Answer [1]"})
+        self.assertEqual(self.backend.chats, [])
 
     def test_clear_form_redirects_to_project(self):
         self.add_document("cloud.txt", "Docker content.")

@@ -30,8 +30,14 @@ class PasswordHashingTests(unittest.TestCase):
 class SessionTokenTests(unittest.TestCase):
     def test_round_trip(self):
         user_id = uuid4()
-        token = auth.create_session_token(user_id, "alice", "admin")
-        self.assertEqual(auth.verify_session_token(token), {"user_id": str(user_id), "username": "alice", "role": "admin"})
+        token = auth.create_session_token(user_id, "alice", "admin", 3)
+        self.assertEqual(auth.verify_session_token(token), {"user_id": str(user_id), "username": "alice", "role": "admin", "session_version": 3})
+
+    def test_cookies_from_before_session_versions_are_rejected(self):
+        import hashlib, hmac, os, time
+        payload = f"{uuid4()}:alice:admin:{int(time.time()) + 3600}"
+        signature = hmac.new(os.environ["SESSION_SECRET"].encode(), payload.encode(), hashlib.sha256).hexdigest()
+        self.assertIsNone(auth.verify_session_token(f"{payload}:{signature}"))
 
     def test_missing_or_malformed_token_rejected(self):
         for token in (None, "", "not-enough-parts"):

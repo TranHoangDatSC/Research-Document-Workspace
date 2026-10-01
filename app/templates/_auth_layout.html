@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}{% endblock %} · Research Document Workspace</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}?v={{ asset_version }}">
+</head>
+<body>
+<div class="login-shell">
+  <section class="card narrow auth-card">
+    <a class="auth-brand" href="/login"><span class="brand-mark">{{ icon('layers', 18) }}</span><strong>Research Document Workspace</strong></a>
+    <h1>{% block heading %}{% endblock %}</h1>
+    {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+    {% if notice %}<p class="notice success" role="status">{{ notice }}</p>{% endif %}
+    {% block body %}{% endblock %}
+  </section>
+</div>
+</body>
+</html>

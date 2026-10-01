@@ -14,6 +14,25 @@
   <div class="stat-card"><span class="stat-icon">{{ icon('layers', 18) }}</span><div><strong>{{ users|selectattr('role', 'equalto', 'admin')|list|length }}</strong><small>quản trị viên</small></div></div>
 </section>
 
+<section class="card signup-setting" aria-label="Đăng ký công khai">
+  <div>
+    <h2>Đăng ký công khai: {% if signup_open %}<span class="badge ready">đang mở</span>{% else %}<span class="badge failed">đang đóng</span>{% endif %}</h2>
+    {% if signup_locked %}
+    <p class="muted small-text">Máy chủ đặt <code>ALLOW_SIGNUP=false</code> trong .env — không mở được từ đây (chốt chặn cho môi trường production).</p>
+    {% elif signup_open %}
+    <p class="muted small-text">Ai có đường dẫn cũng tự tạo được tài khoản (phải xác minh email). Đóng lại nếu chỉ dùng nội bộ.</p>
+    {% else %}
+    <p class="muted small-text">Chỉ quản trị viên tạo được tài khoản. Trang /signup báo đăng ký đang đóng.</p>
+    {% endif %}
+  </div>
+  {% if not signup_locked %}
+  <form method="post" action="/admin/settings/signup">
+    <input type="hidden" name="open" value="{{ 'false' if signup_open else 'true' }}">
+    <button class="btn {{ 'secondary' if signup_open else 'primary' }} sm">{{ 'Đóng đăng ký' if signup_open else 'Mở đăng ký' }}</button>
+  </form>
+  {% endif %}
+</section>
+
 <div class="split">
   <section class="card">
     <div class="card-head">
@@ -29,7 +48,9 @@
             <td>
               <div class="user-cell">
                 <span class="user-avatar-sm {{ 'admin' if u.role == 'admin' }}">{{ u.username[:1]|upper }}</span>
-                <strong>{{ u.username }}</strong>
+                <span><strong>{{ u.username }}</strong>{% if u.email %}<br><small class="muted">{{ u.email }}</small>{% endif %}
+                {% if not u.email_verified %}<br><span class="badge pending">chưa xác minh email</span>
+                <form method="post" action="/admin/users/{{ u.id }}/verify" class="inline-form"><button class="link-btn" title="Xác minh thủ công khi email không đến">Xác minh hộ</button></form>{% endif %}</span>
               </div>
             </td>
             <td>
@@ -68,6 +89,9 @@
     <form method="post" action="/admin/users" class="stack">
       <label class="field">Username
         <input name="username" required maxlength="50" pattern="[a-zA-Z0-9_.\-]{3,50}" title="3-50 ký tự: chữ, số, . _ -" placeholder="vd: nguyen.van.a">
+      </label>
+      <label class="field">Email <span class="muted">(tùy chọn, để tự lấy lại mật khẩu)</span>
+        <input type="email" name="email" maxlength="254" placeholder="vd: a@truong.edu.vn">
       </label>
       <label class="field">Mật khẩu
         <input type="password" name="password" required minlength="8" maxlength="200">

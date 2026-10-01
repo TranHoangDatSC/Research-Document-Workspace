@@ -65,6 +65,7 @@
           </button>
           <div class="user-menu-panel" id="user-menu-panel">
             <div class="user-menu-head"><strong>{{ current_user.username }}</strong><span class="badge">{{ current_user.role }}</span></div>
+            <a href="/account" class="side-link">{{ icon('user', 14) }}<span>Tài khoản &amp; bảo mật</span></a>
             {% if current_user.role == 'admin' %}<a href="/admin/users" class="side-link">{{ icon('layers', 14) }}<span>Quản lý người dùng</span></a>{% endif %}
             <form method="post" action="/logout"><button type="submit" class="side-link">{{ icon('arrow-left', 14) }}<span>Đăng xuất</span></button></form>
           </div>
