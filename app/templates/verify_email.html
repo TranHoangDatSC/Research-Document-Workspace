@@ -1,4 +1,5 @@
 {% extends "_auth_layout.html" %}
+{% from "_auth_macros.html" import field %}
 {% block title %}Xác minh email{% endblock %}
 {% block heading %}Xác minh email{% endblock %}
 {% block body %}
@@ -7,14 +8,12 @@
 {% endif %}
 {% if sent %}
 <p class="notice success" role="status">Nếu <strong>{{ email }}</strong> thuộc một tài khoản chưa xác minh, email xác minh mới vừa được gửi tới đó.</p>
-<p class="muted small-text">Không thấy email? Xem cả thư mục Spam, hoặc nhờ quản trị viên xác minh hộ.</p>
+<p class="muted small-text">Không thấy email? Xem cả thư mục Thư rác, hoặc nhờ quản trị viên xác minh hộ.</p>
 {% else %}
-<p class="muted">Nhập email đã dùng khi đăng ký để nhận lại liên kết xác minh.</p>
-<form method="post" action="/verify-email/resend" class="stack">
-  <label class="field">Email
-    <input type="email" name="email" required maxlength="254" autocomplete="email" value="{{ email or '' }}" autofocus>
-  </label>
-  <button class="btn primary block">Gửi lại email xác minh</button>
+<p class="auth-lead">Nhập email đã dùng khi đăng ký để nhận lại liên kết xác minh.</p>
+<form method="post" action="/verify-email/resend" class="auth-form">
+  {{ field("email", "Email", "mail", type="email", value=email or "", placeholder="ban@truong.edu.vn", autocomplete="email", attrs='required maxlength="254" autofocus') }}
+  <button class="auth-submit">Gửi lại email xác minh {{ icon('arrow-right', 18) }}</button>
 </form>
 {% endif %}
 <p class="auth-switch"><a href="/login">Quay lại đăng nhập</a></p>

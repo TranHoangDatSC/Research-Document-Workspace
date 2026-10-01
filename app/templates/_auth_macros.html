@@ -1,0 +1,16 @@
+{# Labelled input with a leading icon; password fields get a show/hide button (static/auth.js). #}
+{% macro field(name, label, icon_name, type="text", value="", placeholder="", autocomplete="off", hint="", attrs="", aside_href="", aside_text="") -%}
+<label class="auth-field">
+  <span class="auth-label">{{ label }}{% if aside_href %}<a href="{{ aside_href }}" class="auth-link">{{ aside_text }}</a>{% endif %}</span>
+  <span class="auth-input">
+    {{ icon(icon_name, 18) }}
+    <input type="{{ type }}" name="{{ name }}" value="{{ value }}" placeholder="{{ placeholder }}" autocomplete="{{ autocomplete }}" {{ attrs|safe }}>
+    {%- if type == 'password' %}
+    <button type="button" class="auth-reveal" data-reveal aria-label="Hiện mật khẩu" title="Hiện mật khẩu">
+      <span class="when-hidden">{{ icon('eye', 18) }}</span><span class="when-shown">{{ icon('eye-off', 18) }}</span>
+    </button>
+    {%- endif %}
+  </span>
+  {% if hint %}<small class="field-hint">{{ hint }}</small>{% endif %}
+</label>
+{%- endmacro %}

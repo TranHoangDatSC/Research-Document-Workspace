@@ -177,7 +177,7 @@ class SignupAndVerificationTests(AccountTestCase):
             ({"password_confirm": "different-1"}, 422, "không khớp"),
             ({"email": ""}, 422, "Cần nhập email"),
             ({"email": "not-an-email"}, 422, "Email không hợp lệ"),
-            ({"username": "x"}, 422, "Username"),
+            ({"username": "x"}, 422, "Tên đăng nhập phải có"),
             ({"password": "short", "password_confirm": "short"}, 422, "ít nhất 8"),
         ]
         for override, status, message in cases:
@@ -191,7 +191,7 @@ class SignupAndVerificationTests(AccountTestCase):
     def test_duplicate_username_or_email(self):
         self.signup()
         again = self.backend.client(self, role=None)
-        self.assertIn("Username đã tồn tại", self.signup(again, email="other@example.edu").text)
+        self.assertIn("Tên đăng nhập đã có người dùng", self.signup(again, email="other@example.edu").text)
         response = self.signup(again, username="alice2", email="ALICE@example.edu")  # case-insensitive
         self.assertEqual(response.status_code, 409)
         self.assertIn("Email này đã được dùng", response.text)

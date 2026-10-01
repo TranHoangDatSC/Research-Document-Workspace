@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Sửa tài liệu · Research Document Workspace{% endblock %}
+{% block title %}Sửa tài liệu · {{ app_name }}{% endblock %}
 {% block crumbs %}<a href="/ui/projects/{{ project.id }}">{{ project.name }}</a>{{ icon('chevron-right', 14) }}<a href="/ui/documents/{{ document.id }}">{{ document.original_name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">Sửa</span>{% endblock %}
 {% block content %}
 <section class="card narrow" id="edit-document-card">

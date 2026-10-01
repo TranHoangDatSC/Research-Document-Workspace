@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ document.original_name }} · Research Document Workspace{% endblock %}
+{% block title %}{{ document.original_name }} · {{ app_name }}{% endblock %}
 {% block crumbs %}<a href="/">Dự án</a>{{ icon('chevron-right', 14) }}<a href="/ui/projects/{{ project.id }}{% if source_qs %}?{{ source_qs }}{% endif %}" data-open-in-main>{{ project.name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">{{ document.original_name }}</span>{% endblock %}
 {% block topbar_actions %}<button type="button" class="icon-btn" id="toggle-inspector" aria-controls="inspector" aria-expanded="true" title="Ẩn/hiện bảng lưu trữ">{{ icon('panel-right', 18) }}</button>{% endblock %}
 
@@ -19,7 +19,7 @@
     <div>
       <p class="eyebrow">{{ kind.label }}</p>
       <h1>{{ document.original_name }}</h1>
-      <p><span class="badge {{ document.status }}">{{ document.status }}</span> <span class="muted small-text">{{ document.size_bytes|filesize }} · {{ document.content_type }}</span></p>
+      <p><span class="badge {{ document.status }}">{{ document.status|status_label }}</span> <span class="muted small-text">{{ document.size_bytes|filesize }} · {{ document.content_type }}</span></p>
     </div>
   </div>
   <div class="actions">

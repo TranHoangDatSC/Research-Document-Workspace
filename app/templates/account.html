@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Tài khoản · Research Document Workspace{% endblock %}
+{% block title %}Tài khoản · {{ app_name }}{% endblock %}
 {% block crumbs %}<span class="crumb-current">Tài khoản &amp; bảo mật</span>{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -9,7 +9,7 @@
     {% if account.email %}{{ account.email }} ·
       {% if account.email_verified %}<span class="badge ready">đã xác minh</span>{% else %}<span class="badge pending">chưa xác minh</span>{% endif %}
     {% else %}Chưa có email — nhờ quản trị viên thêm để có thể tự lấy lại mật khẩu.{% endif %}
-    · <span class="badge">{{ account.role }}</span>
+    · <span class="badge">{{ account.role|role_label }}</span>
   </p>
 </div>
 {% if notice %}<p class="notice success" role="status">{{ notice }}</p>{% endif %}

@@ -1,1 +1,1 @@
-"""Research Document Workspace package."""
+"""Kho Tài Liệu Nghiên Cứu (Research Document Workspace) package."""

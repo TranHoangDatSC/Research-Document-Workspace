@@ -79,7 +79,7 @@
         <span class="source-main" title="{{ doc.original_name }}">
         {% endif %}
           <span class="source-name">{{ doc.original_name }}</span>
-          <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ kind.label }} · {{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status }}{% endif %}</span>
+          <span class="source-meta"><i class="status-dot {{ doc.status }}"></i>{{ kind.label }} · {{ doc.size_bytes|filesize }}{% if doc.status != 'ready' %} · {{ doc.status|status_label }}{% endif %}</span>
         {% if doc.status == 'ready' %}</a>{% else %}</span>{% endif %}
         {% if doc.status == 'ready' %}
         <a class="source-action source-view" href="/ui/documents/{{ doc.id }}" target="_blank" rel="noopener" title="Mở ở tab mới" aria-label="Mở {{ doc.original_name }} ở tab mới">{{ icon('external-link', 13) }}</a>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{% block title %}Research Document Workspace{% endblock %}</title>
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}?v={{ asset_version }}">
   <script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}" defer></script>
 </head>
@@ -13,7 +13,7 @@
   <aside class="sidebar" id="sidebar" aria-label="Điều hướng">
     <a class="brand" href="/">
       <span class="brand-mark">{{ icon('layers', 18) }}</span>
-      <span class="brand-text"><strong>RDW</strong><small>Research Document Workspace</small></span>
+      <span class="brand-text"><strong>{{ app_short_name }}</strong><small>{{ app_tagline }}</small></span>
     </a>
 
     <nav class="side-section nav-section" aria-label="Điều hướng chính">
@@ -64,7 +64,7 @@
             {{ icon('chevron-right', 13) }}
           </button>
           <div class="user-menu-panel" id="user-menu-panel">
-            <div class="user-menu-head"><strong>{{ current_user.username }}</strong><span class="badge">{{ current_user.role }}</span></div>
+            <div class="user-menu-head"><strong>{{ current_user.username }}</strong><span class="badge">{{ current_user.role|role_label }}</span></div>
             <a href="/account" class="side-link">{{ icon('user', 14) }}<span>Tài khoản &amp; bảo mật</span></a>
             {% if current_user.role == 'admin' %}<a href="/admin/users" class="side-link">{{ icon('layers', 14) }}<span>Quản lý người dùng</span></a>{% endif %}
             <form method="post" action="/logout"><button type="submit" class="side-link">{{ icon('arrow-left', 14) }}<span>Đăng xuất</span></button></form>

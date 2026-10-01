@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from app import access, auth
+from app.branding import APP_NAME
 from app.services import auth as auth_service
 from app.api.projects import router as projects_router
 from app.api.health import router as health_router
@@ -25,7 +26,7 @@ async def lifespan(app):
     logging.getLogger("uvicorn.error").info("application_started")
     yield
 
-app = FastAPI(title="Research Document Workspace", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, lifespan=lifespan)
 app.include_router(projects_router)
 app.include_router(health_router)
 app.include_router(documents_router)

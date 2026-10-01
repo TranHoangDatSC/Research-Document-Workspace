@@ -1,19 +1,15 @@
 {% extends "_auth_layout.html" %}
+{% from "_auth_macros.html" import field %}
 {% block title %}Đăng nhập{% endblock %}
 {% block heading %}Đăng nhập{% endblock %}
 {% block body %}
 {% if unverified_email %}
 <p><a class="btn secondary block" href="/verify-email/resend?email={{ unverified_email|urlencode }}">Gửi lại email xác minh</a></p>
 {% endif %}
-<form method="post" action="/login" class="stack">
-  <label class="field">Username
-    <input name="username" required maxlength="50" autocomplete="username" value="{{ username or '' }}" autofocus>
-  </label>
-  <label class="field">
-    <span class="field-row">Mật khẩu <a href="/forgot-password" class="auth-link">Quên mật khẩu?</a></span>
-    <input type="password" name="password" required maxlength="200" autocomplete="current-password">
-  </label>
-  <button class="btn primary block">Đăng nhập</button>
+<form method="post" action="/login" class="auth-form">
+  {{ field("username", "Tên đăng nhập", "user", value=username or "", placeholder="Nhập tên đăng nhập của bạn", autocomplete="username", attrs='required maxlength="50" autofocus') }}
+  {{ field("password", "Mật khẩu", "lock", type="password", placeholder="Nhập mật khẩu", autocomplete="current-password", attrs='required maxlength="200"', aside_href="/forgot-password", aside_text="Quên mật khẩu?") }}
+  <button class="auth-submit">Đăng nhập {{ icon('arrow-right', 18) }}</button>
 </form>
 {% if signup_enabled %}
 <p class="auth-switch">Chưa có tài khoản? <a href="/signup">Đăng ký</a></p>

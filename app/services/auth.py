@@ -15,6 +15,7 @@ import psycopg
 from fastapi import HTTPException
 
 from app import auth, mailer
+from app.branding import APP_NAME
 from app.repositories import users as repository
 
 log = logging.getLogger("uvicorn.error")
@@ -133,17 +134,17 @@ def normalize_email(email):
 def create_user(username, password, role, email=None, email_verified=True):
     """Admin-created accounts are verified by default: the admin vouches."""
     if not auth.USERNAME_PATTERN.match(username or ""):
-        raise HTTPException(422, "Username phải 3-50 ký tự: chữ, số, dấu chấm, gạch dưới, gạch ngang")
+        raise HTTPException(422, "Tên đăng nhập phải có 3–50 ký tự: chữ không dấu, số, dấu chấm, gạch dưới, gạch ngang")
     _check_password(password)
     if role not in ROLES:
-        raise HTTPException(422, "Role phải là 'user' hoặc 'admin'")
+        raise HTTPException(422, "Vai trò phải là Người dùng hoặc Quản trị viên")
     email = normalize_email(email)
     try:
         row = repository.create_user(username, auth.hash_password(password), role, email, email_verified)
     except psycopg.errors.UniqueViolation as exc:
         if exc.diag.constraint_name == "users_email_lower_key":
             raise HTTPException(409, "Email này đã được dùng cho một tài khoản khác") from None
-        raise HTTPException(409, "Username đã tồn tại") from None
+        raise HTTPException(409, "Tên đăng nhập đã có người dùng") from None
     except psycopg.Error as exc:
         raise _unavailable("create-user", exc) from None
     log.info("user_created user_id=%s role=%s", row["id"], role)
@@ -232,11 +233,11 @@ def _send_verification(user, base_url):
     link = f"{base_url.rstrip('/')}/verify-email?token={token}"
     body = (
         f"Xin chào {user['username']},\n\n"
-        "Cảm ơn bạn đã đăng ký Research Document Workspace. Mở liên kết sau để xác minh email "
+        f"Cảm ơn bạn đã đăng ký {APP_NAME}. Mở liên kết sau để xác minh email "
         f"và kích hoạt tài khoản (hiệu lực {VERIFY_TOKEN_HOURS} giờ):\n\n{link}\n\n"
         "Nếu bạn không đăng ký, hãy bỏ qua email này.\n"
     )
-    _mail_later(user, "Xác minh email — Research Document Workspace", body, "verification")
+    _mail_later(user, f"Xác minh email — {APP_NAME}", body, "verification")
 
 
 def resend_verification(email, base_url):
@@ -288,12 +289,12 @@ def request_password_reset(email, base_url):
     link = f"{base_url.rstrip('/')}/reset-password?token={token}"
     body = (
         f"Xin chào {user['username']},\n\n"
-        "Có yêu cầu đặt lại mật khẩu cho tài khoản Research Document Workspace của bạn.\n"
+        f"Có yêu cầu đặt lại mật khẩu cho tài khoản {APP_NAME} của bạn.\n"
         f"Mở liên kết sau để đặt mật khẩu mới (hiệu lực {RESET_TOKEN_MINUTES} phút, dùng được một lần):\n\n"
         f"{link}\n\n"
         "Nếu bạn không yêu cầu, hãy bỏ qua email này — mật khẩu hiện tại vẫn giữ nguyên.\n"
     )
-    _mail_later(user, "Đặt lại mật khẩu — Research Document Workspace", body, "password_reset")
+    _mail_later(user, f"Đặt lại mật khẩu — {APP_NAME}", body, "password_reset")
     log.info("password_reset_requested matched=true user_id=%s", user["id"])
 
 
@@ -332,7 +333,7 @@ def list_users():
 
 def set_role(user_id, role, current_user_id):
     if role not in ROLES:
-        raise HTTPException(422, "Role phải là 'user' hoặc 'admin'")
+        raise HTTPException(422, "Vai trò phải là Người dùng hoặc Quản trị viên")
     if str(user_id) == str(current_user_id):
         raise HTTPException(400, "Không thể tự đổi role của chính mình")
     try:

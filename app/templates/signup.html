@@ -1,28 +1,21 @@
 {% extends "_auth_layout.html" %}
+{% from "_auth_macros.html" import field %}
 {% block title %}Đăng ký{% endblock %}
 {% block heading %}Tạo tài khoản{% endblock %}
 {% block body %}
 {% if sent %}
 <p class="notice success" role="status">Đã tạo tài khoản. Mở liên kết vừa gửi tới <strong>{{ email }}</strong> để xác minh email, sau đó đăng nhập.</p>
-<p class="muted small-text">Không thấy email? Xem thư mục Spam, hoặc <a href="/verify-email/resend?email={{ email|urlencode }}">gửi lại email xác minh</a>.</p>
+<p class="muted small-text">Không thấy email? Xem thư mục Thư rác, hoặc <a href="/verify-email/resend?email={{ email|urlencode }}">gửi lại email xác minh</a>.</p>
 {% elif signup_enabled %}
-<form method="post" action="/signup" class="stack">
-  <label class="field">Username
-    <input name="username" required minlength="3" maxlength="50" pattern="[A-Za-z0-9_.\-]{3,50}" autocomplete="username" value="{{ username or '' }}" autofocus>
-    <small class="field-hint">3–50 ký tự: chữ không dấu, số, dấu chấm, gạch dưới, gạch ngang.</small>
-  </label>
-  <label class="field">Email
-    <input type="email" name="email" required maxlength="254" autocomplete="email" value="{{ email or '' }}">
-    <small class="field-hint">Dùng để lấy lại mật khẩu khi quên.</small>
-  </label>
-  <label class="field">Mật khẩu
-    <input type="password" name="password" required minlength="8" maxlength="200" autocomplete="new-password">
-    <small class="field-hint">Ít nhất 8 ký tự.</small>
-  </label>
-  <label class="field">Nhập lại mật khẩu
-    <input type="password" name="password_confirm" required minlength="8" maxlength="200" autocomplete="new-password">
-  </label>
-  <button class="btn primary block">Đăng ký</button>
+<form method="post" action="/signup" class="auth-form">
+  {{ field("username", "Tên đăng nhập", "user", value=username or "", placeholder="vd: nguyen.van.a", autocomplete="username",
+           hint="3–50 ký tự: chữ không dấu, số, dấu chấm, gạch dưới, gạch ngang.",
+           attrs='required minlength="3" maxlength="50" pattern="[A-Za-z0-9_.\\-]{3,50}" autofocus') }}
+  {{ field("email", "Email", "mail", type="email", value=email or "", placeholder="ban@truong.edu.vn", autocomplete="email",
+           hint="Dùng để xác minh tài khoản và lấy lại mật khẩu khi quên.", attrs='required maxlength="254"') }}
+  {{ field("password", "Mật khẩu", "lock", type="password", placeholder="Ít nhất 8 ký tự", autocomplete="new-password", attrs='required minlength="8" maxlength="200"') }}
+  {{ field("password_confirm", "Nhập lại mật khẩu", "lock", type="password", placeholder="Nhập lại mật khẩu", autocomplete="new-password", attrs='required minlength="8" maxlength="200"') }}
+  <button class="auth-submit">Đăng ký {{ icon('arrow-right', 18) }}</button>
 </form>
 {% endif %}
 <p class="auth-switch">Đã có tài khoản? <a href="/login">Đăng nhập</a></p>

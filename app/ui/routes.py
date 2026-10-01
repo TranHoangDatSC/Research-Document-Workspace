@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPExcep
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
-from app import auth as core_auth, file_types, llm, mailer, ratelimit
+from app import auth as core_auth, branding, file_types, llm, mailer, ratelimit
 from app.api.health import health_ready
 from app.schemas.projects import ProjectCreate
 from app.services import auth as auth_service, projects, documents, rag as rag_service
@@ -32,6 +32,12 @@ templates.env.globals["upload_summary"] = file_types.summary
 # Cache-busts /static/* on every process start so a redeploy can't get stuck
 # behind a browser's cached style.css/app.js.
 templates.env.globals["asset_version"] = str(int(time.time()))
+# Vietnamese product name and labels (app/branding.py) instead of raw codes.
+templates.env.globals["app_name"] = branding.APP_NAME
+templates.env.globals["app_short_name"] = branding.APP_SHORT_NAME
+templates.env.globals["app_tagline"] = branding.APP_TAGLINE
+templates.env.filters["role_label"] = lambda role: branding.ROLE_LABELS.get(role, role)
+templates.env.filters["status_label"] = lambda status: branding.STATUS_LABELS.get(status, status)
 
 # Fields stored in PostgreSQL; everything else in a merged document comes from MongoDB.
 SQL_FIELDS = {"id", "project_id", "original_name", "object_name", "content_type", "size_bytes", "status", "created_at"}
@@ -104,7 +110,7 @@ def login(request: Request, username: Annotated[str, Form(max_length=50)] = "", 
         return auth_page(request, "login.html", exc.status_code, exc.headers, error=exc.detail, username=username)
     user = auth_service.authenticate(username.strip(), password)
     if user is None:
-        return auth_page(request, "login.html", 401, error="Sai username hoặc mật khẩu, hoặc tài khoản đã bị khóa.", username=username)
+        return auth_page(request, "login.html", 401, error="Sai tên đăng nhập hoặc mật khẩu, hoặc tài khoản đã bị khóa.", username=username)
     if not user["email_verified"]:
         # Only said after the right password, so it reveals nothing new.
         return auth_page(request, "login.html", 403, username=username, unverified_email=user["email"],
