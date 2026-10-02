@@ -4,6 +4,7 @@ rules and tuning come from the active domain (app/domains/, APP_DOMAIN).
 """
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from fastapi import HTTPException
 
@@ -42,25 +43,25 @@ def _history_turns(messages):
     return turns
 
 
-def _load_history(project_id, user_id):
+def _load_history(project_id, user_id, chat_id):
     if user_id is None:
         return []
     try:
-        return chats_repository.list_messages(project_id, user_id, HISTORY_MESSAGES)
+        return chats_repository.list_messages(project_id, user_id, chat_id, HISTORY_MESSAGES)
     except Exception as exc:
         # History improves answers but is never required for one.
         log.warning("chat_storage_failed stage=read-history error=%s", type(exc).__name__)
         return []
 
 
-def _save_exchange(project_id, user_id, question, result):
+def _save_exchange(project_id, user_id, chat_id, question, result):
     if user_id is None:
         return
     try:
         chats_repository.add_messages([
-            {"project_id": project_id, "user_id": user_id, "role": "user", "content": question},
+            {"project_id": project_id, "user_id": user_id, "chat_id": chat_id, "role": "user", "content": question},
             {
-                "project_id": project_id, "user_id": user_id, "role": "model",
+                "project_id": project_id, "user_id": user_id, "chat_id": chat_id, "role": "model",
                 "content": result["answer"], "sources": result["sources"], "model": result["model"],
             },
         ])
@@ -68,23 +69,44 @@ def _save_exchange(project_id, user_id, question, result):
         log.warning("chat_storage_failed stage=save-exchange error=%s", type(exc).__name__)
 
 
-def get_history(project_id, user_id):
-    """For display: never breaks the page, an unreadable history shows as empty."""
+def get_history(project_id, user_id, chat_id=None):
+    """(messages, resolved_chat_id) for display — never breaks the page, an
+    unreadable history shows as empty. chat_id=None resolves to the most
+    recently used thread; (.., None) if this (project, user) has no thread yet."""
+    if user_id is None:
+        return [], None
     try:
-        return chats_repository.list_messages(project_id, user_id, DISPLAY_MESSAGES)
+        if chat_id is None:
+            threads = chats_repository.list_chats(project_id, user_id)
+            if not threads:
+                return [], None
+            chat_id = threads[0]["chat_id"]
+        return chats_repository.list_messages(project_id, user_id, chat_id, DISPLAY_MESSAGES), chat_id
     except Exception as exc:
         log.warning("chat_storage_failed stage=display-history error=%s", type(exc).__name__)
+        return [], chat_id
+
+
+def list_chat_threads(project_id, user_id):
+    """For the chat switcher: every past thread, newest-used first. Never
+    breaks the page — an unreadable list just shows as empty."""
+    if user_id is None:
+        return []
+    try:
+        return chats_repository.list_chats(project_id, user_id)
+    except Exception as exc:
+        log.warning("chat_storage_failed stage=list-chats error=%s", type(exc).__name__)
         return []
 
 
-def clear_history(project_id, user_id):
+def delete_chat(project_id, user_id, chat_id):
     documents_service.require_project(project_id)
     try:
-        deleted = chats_repository.clear(project_id, user_id)
+        deleted = chats_repository.delete_chat(project_id, user_id, chat_id)
     except Exception as exc:
-        log.warning("chat_storage_failed stage=clear error=%s", type(exc).__name__)
+        log.warning("chat_storage_failed stage=delete error=%s", type(exc).__name__)
         raise HTTPException(503, "Chat storage is temporarily unavailable") from None
-    log.info("chat_cleared project_id=%s messages=%s", project_id, deleted)
+    log.info("chat_deleted project_id=%s chat_id=%s messages=%s", project_id, chat_id, deleted)
 
 
 def _system_instruction(domain):
@@ -94,22 +116,48 @@ def _system_instruction(domain):
     return f"{domain.system}\n\nHôm nay là ngày {today:%d/%m/%Y}."
 
 
-def _select_chunks(question, chunks, total_characters, domain, history):
-    """(numbered chunks for the prompt, full_text flag, chunks added by graph expansion)."""
+def _select_chunks(question, chunks, total_characters, domain, history, entities, relations):
+    """(numbered chunks for the prompt, full_text flag, {(document_id, chunk_index)}
+    of chunks added by graph expansion — used to mark those sources in the
+    answer as "found via the graph" instead of a direct keyword match)."""
     if total_characters <= domain.full_text_max_chars:
-        return chunks, True, 0
+        return chunks, True, set()
     # A follow-up ("explain that further") has almost no searchable words of
     # its own; the previous question carries the topic.
     previous = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     query = f"{previous}\n{question}" if previous else question
     ranked = rag.rank_chunks(query, chunks, domain.top_k, domain.min_relative_score)
-    expanded = rag.expand_by_shared_terms(ranked, chunks, domain.graph_expansion_max_chunks)
-    return rag.order_for_reading(expanded), False, len(expanded) - len(ranked)
+    # The real entity/relation graph (app/graph.py) wins whenever at least one
+    # selected document has one; expand_by_shared_terms is the fallback for
+    # documents extracted before the graph existed, or whose extraction failed.
+    if entities:
+        expanded = rag.expand_by_entity_graph(query, ranked, chunks, entities, relations, domain.graph_expansion_max_chunks)
+    else:
+        expanded = rag.expand_by_shared_terms(ranked, chunks, domain.graph_expansion_max_chunks)
+    added = expanded[len(ranked):]
+    graph_keys = {(c["document_id"], c["chunk_index"]) for c in added}
+    return rag.order_for_reading(expanded), False, graph_keys
 
 
-def ask_project(project_id, question, model=None, document_ids=None, user_id=None):
-    """`user_id` None = stateless (no history read or written)."""
+def ask_project(project_id, question, model=None, document_ids=None, user_id=None, chat_id=None):
+    """`user_id` None = stateless (no history read or written). `chat_id`
+    None/omitted = continue the most recently used thread (or start one if
+    this (project, user) has none yet) — the old single-thread behaviour, so
+    a caller that never thinks about threads at all still gets a continuous
+    conversation. To start a genuinely new thread instead (a project can
+    hold several — see app/repositories/chats.py), pass a chat_id nothing
+    has used yet; the UI does this by generating one client-side when
+    "+ Cuộc trò chuyện mới" is clicked (app/static/app.js). The resolved
+    chat_id always comes back in the result, so the caller can keep sending
+    it on the next question in the same thread."""
     documents_service.require_project(project_id)
+    if user_id is not None and not chat_id:
+        try:
+            threads = chats_repository.list_chats(project_id, user_id)
+        except Exception as exc:
+            log.warning("chat_storage_failed stage=resolve-chat error=%s", type(exc).__name__)
+            threads = []
+        chat_id = threads[0]["chat_id"] if threads else str(uuid4())
 
     question = (question or "").strip()
     if not question:
@@ -126,6 +174,10 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
     try:
         rows = repository.list_documents(project_id, 200, 0)
         documents = []
+        # Merged across every selected document, deduplicated: expand_by_entity_graph
+        # (app/rag.py) doesn't care which document an entity or relation came
+        # from, and a person/project mentioned in two documents should link them.
+        entities, entity_seen, relations = [], set(), []
         for row in rows:
             if row["status"] != "ready":
                 continue
@@ -139,6 +191,12 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
                 "original_name": row["original_name"],
                 "extracted_text": details.get("extracted_text"),
             })
+            graph = details.get("entity_graph") or {}
+            for name in graph.get("entities") or []:
+                if name not in entity_seen:
+                    entity_seen.add(name)
+                    entities.append(name)
+            relations.extend(graph.get("relations") or [])
     except Exception as exc:
         log.warning("rag_storage_failed stage=read-documents error=%s", type(exc).__name__)
         raise HTTPException(503, "Document storage is temporarily unavailable") from None
@@ -156,8 +214,8 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
         )
 
     total_characters = sum(len((d.get("extracted_text") or {}).get("text") or "") for d in documents)
-    history = _load_history(project_id, user_id)
-    numbered, full_text, graph_expanded = _select_chunks(question, chunks, total_characters, domain, history)
+    history = _load_history(project_id, user_id, chat_id)
+    numbered, full_text, graph_keys = _select_chunks(question, chunks, total_characters, domain, history, entities, relations)
     prompt = rag.build_prompt(question, numbered, full_text=full_text)
 
     try:
@@ -172,20 +230,28 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
 
     cited = rag.cited_chunks(answer, numbered)
     log.info(
-        "project_asked project_id=%s domain=%s mode=%s chunks_sent=%s chunks_graph_expanded=%s chunks_cited=%s history=%s model=%s",
-        project_id, domain.name, "full_text" if full_text else "bm25",
-        len(numbered), graph_expanded, len(cited), len(history), model_used,
+        "project_asked project_id=%s domain=%s mode=%s chunks_sent=%s chunks_graph_expanded=%s "
+        "graph_source=%s graph_entities=%s chunks_cited=%s history=%s model=%s",
+        project_id, domain.name, "full_text" if full_text else "bm25", len(numbered), len(graph_keys),
+        "entity_graph" if entities else "shared_terms", len(entities), len(cited), len(history), model_used,
     )
     result = {
         "answer": answer,
         "model": model_used,
+        "chat_id": chat_id,
         # Only passages the answer cites: a list of everything sent (possibly
         # the whole document in full-text mode) says nothing about the answer.
         "sources": [
-            {"ref": number, "document_id": c["document_id"], "original_name": c["original_name"], "chunk_index": c["chunk_index"]}
+            {
+                "ref": number, "document_id": c["document_id"], "original_name": c["original_name"], "chunk_index": c["chunk_index"],
+                # Found through a graph hop (app/rag.py), not a direct keyword
+                # match on the question — surfaced in the UI so the graph's
+                # contribution is actually visible, not just a silent retrieval detail.
+                "via_graph": (c["document_id"], c["chunk_index"]) in graph_keys,
+            }
             for number, c in cited
         ],
         "unread": unread,
     }
-    _save_exchange(project_id, user_id, question, result)
+    _save_exchange(project_id, user_id, chat_id, question, result)
     return result

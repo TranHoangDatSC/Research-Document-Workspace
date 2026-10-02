@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Xóa cuộc trò chuyện · {{ app_name }}{% endblock %}
+{% block crumbs %}<a href="/ui/projects/{{ project.id }}">{{ icon('arrow-left', 14) }} Quay lại dự án</a>{% endblock %}
+{% block content %}
+<section class="card narrow center-card">
+  <span class="warn-icon">{{ icon('warning', 26) }}</span>
+  <h1>Xóa cuộc trò chuyện?</h1>
+  <p class="file-pill">{{ icon('message-circle', 16) }}<strong>{{ chat_preview or 'Cuộc trò chuyện' }}</strong></p>
+  <p class="muted">Toàn bộ câu hỏi và câu trả lời trong cuộc trò chuyện này sẽ bị xóa. Không thể khôi phục.</p>
+  <form method="post" action="/ui/projects/{{ project.id }}/chat/{{ chat_id }}/delete" class="actions">
+    <input type="hidden" name="confirm" value="delete">
+    <button class="btn danger">{{ icon('trash', 16) }}Xác nhận xóa</button>
+    <a class="btn secondary" href="/ui/projects/{{ project.id }}">Hủy</a>
+  </form>
+</section>
+{% endblock %}

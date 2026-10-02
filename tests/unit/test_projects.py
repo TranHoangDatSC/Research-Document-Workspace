@@ -160,7 +160,7 @@ class DeleteProjectTests(ProjectTestCase):
     def test_delete_removes_documents_files_metadata_and_chat(self):
         project = self.create()
         document = upload(self.client, project["id"])
-        self.backend.add_messages([{"project_id": project["id"], "user_id": "u", "role": "user", "content": "hi"}])
+        self.backend.add_messages([{"project_id": project["id"], "user_id": "u", "chat_id": "c1", "role": "user", "content": "hi"}])
         self.assertEqual(self.client.delete(f"/projects/{project['id']}").status_code, 204)
         self.assertEqual(self.backend.documents, {})
         self.assertEqual(self.backend.details, {})

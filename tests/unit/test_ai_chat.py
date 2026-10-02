@@ -100,6 +100,22 @@ class AskQuestionTests(ChatTestCase):
         self.assertNotIn("number 0 ", self.llm.last["prompt"])
         self.assertIn("không phải toàn văn", self.llm.last["prompt"])
 
+    def test_entity_graph_pulls_in_related_document_across_a_relation(self):
+        # Full integration: storage (entity_graph on one document) -> service
+        # (ask_project merges it project-wide) -> retrieval (expand_by_entity_graph,
+        # app/rag.py) -> the final prompt. BM25 alone would never connect these
+        # two documents: they share no words, only a stored relation.
+        advisor_id = self.add_document("advisor.txt", FILLER + "\n\nKhiet is the advisor who reviews many student projects every year.")
+        self.add_document("student.txt", FILLER + "\n\nTien enrolled in the information technology program this year.")
+        self.backend.details[advisor_id]["entity_graph"] = {
+            "entities": ["Khiet", "Tien"],
+            "relations": [{"subject": "Tien", "relation": "advised by", "object": "Khiet"}],
+        }
+        with patch.object(domains, "current", lambda: SMALL_DOMAIN):
+            self.ask("Who is the advisor?")
+        self.assertIn("Khiet", self.llm.last["prompt"])
+        self.assertIn("Tien", self.llm.last["prompt"])  # pulled in via the relation, not keyword overlap
+
     def test_selected_documents_only(self):
         kept = self.add_document("cloud.txt", "Docker and cloud content here.")
         self.add_document("recipe.txt", "Docker and cloud content here.")
@@ -209,26 +225,103 @@ class ViewChatHistoryTests(ChatTestCase):
 
 
 class ClearChatHistoryTests(ChatTestCase):
+    """Deleting one thread (not "all history" — a project can hold several)."""
+
     def test_others_can_neither_ask_nor_clear(self):
         self.add_document("cloud.txt", "Docker content.")
-        self.ask("mine")
+        chat_id = self.ask("mine").json()["chat_id"]
         other = self.backend.client(self, role="user", username="bob")
         self.assertEqual(other.post(f"/projects/{self.project_id}/ask", json={"question": "bob's"}).status_code, 404)
-        self.assertEqual(other.delete(f"/projects/{self.project_id}/chat").status_code, 404)
+        self.assertEqual(other.delete(f"/projects/{self.project_id}/chat", params={"chat_id": chat_id}).status_code, 404)
         self.assertEqual(len(self.backend.chats), 2)
-        self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat").status_code, 204)
+        self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat", params={"chat_id": chat_id}).status_code, 204)
         self.assertEqual(self.backend.chats, [])
 
-    def test_clear_form_redirects_to_project(self):
+    def test_delete_requires_a_chat_id(self):
+        self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat").status_code, 422)
+
+    def test_confirm_page_then_delete_form_redirects_to_project(self):
         self.add_document("cloud.txt", "Docker content.")
-        self.ask("q")
-        response = self.client.post(f"/ui/projects/{self.project_id}/chat/clear", follow_redirects=False)
+        chat_id = self.ask("q").json()["chat_id"]
+        confirm = self.client.get(f"/ui/projects/{self.project_id}/chat/{chat_id}/delete")
+        self.assertEqual(confirm.status_code, 200)
+        self.assertIn("q", confirm.text)
+        response = self.client.post(f"/ui/projects/{self.project_id}/chat/{chat_id}/delete", data={"confirm": "delete"}, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         self.assertEqual(self.backend.chats, [])
 
+    def test_delete_form_without_confirmation_is_422(self):
+        self.add_document("cloud.txt", "Docker content.")
+        chat_id = self.ask("q").json()["chat_id"]
+        self.assertEqual(self.client.post(f"/ui/projects/{self.project_id}/chat/{chat_id}/delete").status_code, 422)
+        self.assertEqual(len(self.backend.chats), 2)
+
+    def test_confirm_page_for_unknown_chat_is_404(self):
+        self.assertEqual(self.client.get(f"/ui/projects/{self.project_id}/chat/{uuid4()}/delete").status_code, 404)
+
     def test_clear_when_store_down_is_503(self):
         self.backend.fail.add("mongo")
-        self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat").status_code, 503)
+        self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat", params={"chat_id": "whatever"}).status_code, 503)
+
+
+class MultipleChatThreadsTests(ChatTestCase):
+    """A project can hold several independent conversations per user."""
+
+    def test_omitting_chat_id_continues_the_most_recent_thread(self):
+        self.add_document("cloud.txt", "Docker content.")
+        first = self.ask("q1").json()
+        second = self.ask("q2").json()
+        self.assertEqual(first["chat_id"], second["chat_id"])
+
+    def test_a_fresh_chat_id_starts_an_isolated_thread(self):
+        self.add_document("cloud.txt", "Docker content.")
+        old_chat_id = self.ask("about the old topic").json()["chat_id"]
+        new_chat_id = str(uuid4())
+        self.ask("about a new topic", chat_id=new_chat_id)
+        self.assertNotEqual(old_chat_id, new_chat_id)
+        # The new thread's history has no memory of the old one's question.
+        self.ask("another one", chat_id=new_chat_id)
+        self.assertEqual(self.llm.last["history"], [("user", "about a new topic"), ("model", "Answer")])
+
+    def test_list_chats_returns_both_threads_newest_first_with_previews(self):
+        self.add_document("cloud.txt", "Docker content.")
+        self.ask("first thread question")
+        second_id = str(uuid4())
+        self.ask("second thread question", chat_id=second_id)
+        chats = self.client.get(f"/projects/{self.project_id}/chats").json()["chats"]
+        self.assertEqual(len(chats), 2)
+        self.assertEqual(chats[0]["chat_id"], second_id)
+        self.assertEqual(chats[0]["preview"], "second thread question")
+        self.assertEqual(chats[1]["preview"], "first thread question")
+
+    def test_get_chat_fetches_one_specific_thread(self):
+        self.add_document("cloud.txt", "Docker content.")
+        first_id = self.ask("first thread question").json()["chat_id"]
+        second_id = str(uuid4())
+        self.ask("second thread question", chat_id=second_id)
+        body = self.client.get(f"/projects/{self.project_id}/chat", params={"chat_id": first_id}).json()
+        self.assertEqual(body["chat_id"], first_id)
+        self.assertEqual([m["content"] for m in body["messages"]], ["first thread question", "Answer [1]"])
+
+    def test_deleting_one_thread_leaves_the_other_intact(self):
+        self.add_document("cloud.txt", "Docker content.")
+        keep_id = self.ask("keep this one").json()["chat_id"]
+        delete_id = str(uuid4())
+        self.ask("delete this one", chat_id=delete_id)
+        self.assertEqual(self.client.delete(f"/projects/{self.project_id}/chat", params={"chat_id": delete_id}).status_code, 204)
+        remaining = self.client.get(f"/projects/{self.project_id}/chats").json()["chats"]
+        self.assertEqual([c["chat_id"] for c in remaining], [keep_id])
+
+    def test_project_page_offers_a_new_chat_sentinel(self):
+        self.add_document("cloud.txt", "Docker content.")
+        self.ask("an existing question")
+        html = self.client.get(f"/ui/projects/{self.project_id}?chat_id=new").text
+        # The old question still shows up in the switcher's history list...
+        self.assertIn("an existing question", html)
+        # ...but not as the active thread, which is empty.
+        active_thread = html.split('id="ai-thread"')[1].split('id="ai-form"')[0]
+        self.assertNotIn("an existing question", active_thread)
+        self.assertIn('id="ai-chat-id-input"', html)
 
 
 class DomainTests(unittest.TestCase):

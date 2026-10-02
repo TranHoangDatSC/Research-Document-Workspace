@@ -376,7 +376,10 @@
       var button = form.querySelector('button');
       var label = button.querySelector('span');
       var pane = form.closest('[role="tabpanel"]');
-      var errorBox = pane.querySelector('.extract-error');
+      // Scoped to the submitting form's own card, not the whole pane: a pane
+      // can hold more than one inline-extract form (text extraction and the
+      // entity-graph button both live in #pane-extract).
+      var errorBox = (form.closest('.card') || pane).querySelector('.extract-error');
       button.disabled = true;
       label.textContent = form.getAttribute('data-busy-label') || 'Đang trích xuất…';
       if (errorBox) errorBox.hidden = true;
@@ -431,22 +434,38 @@
     });
     aiThread.scrollTop = aiThread.scrollHeight;
 
-    // "New conversation": clear the stored history without a page reload.
-    var clearForm = document.getElementById('ai-clear-form');
+    // "+ Cuộc trò chuyện mới": a project can hold several threads (see
+    // app/repositories/chats.py), so this never deletes anything — it blanks
+    // the panel and gives the form a brand new, message-less chat_id (so
+    // omitting chat_id elsewhere still means "continue my most recent
+    // thread" — only an id nothing has used yet starts a fresh one). The
+    // link (href="?chat_id=new") is the no-JS fallback: a full reload whose
+    // response (ui/routes.py's "new" sentinel) carries a server-generated id
+    // in the hidden field instead, since there's no client-side JS to make one.
     var emptyTpl = document.getElementById('ai-empty-tpl');
-    if (clearForm && window.fetch) {
-      clearForm.addEventListener('submit', function (e) {
+    var newChatLink = document.getElementById('ai-new-chat');
+    var chatIdInput = document.getElementById('ai-chat-id-input');
+    var chatSwitcher = document.getElementById('ai-chat-switcher');
+    function generateChatId() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+    if (newChatLink) {
+      newChatLink.addEventListener('click', function (e) {
         e.preventDefault();
-        if (!aiThread.querySelector('.chat-bubble')) return;
-        if (!window.confirm('Bắt đầu cuộc trò chuyện mới? Lịch sử hỏi đáp hiện tại sẽ bị xóa.')) return;
-        fetch(clearForm.getAttribute('data-clear-url'), { method: 'DELETE' })
-          .then(function (r) {
-            if (!r.ok) throw new Error('clear failed');
-            aiThread.innerHTML = emptyTpl ? emptyTpl.innerHTML : '';
-          })
-          .catch(function () {
-            window.alert('Không xóa được lịch sử, thử lại sau.');
-          });
+        aiThread.innerHTML = emptyTpl ? emptyTpl.innerHTML : '';
+        if (chatIdInput) chatIdInput.value = generateChatId();
+        if (chatSwitcher) chatSwitcher.open = false;
+      });
+    }
+    // Clicking outside the open dropdown closes it (native <details> only
+    // closes via its own summary).
+    if (chatSwitcher) {
+      document.addEventListener('click', function (e) {
+        if (chatSwitcher.open && !chatSwitcher.contains(e.target)) chatSwitcher.open = false;
       });
     }
 
@@ -505,8 +524,9 @@
         sources.className = 'chat-sources';
         data.sources.forEach(function (s) {
           var chip = document.createElement('span');
-          chip.className = 'chip';
-          chip.textContent = (s.ref ? '[' + s.ref + '] ' : '') + s.original_name + ' · đoạn ' + (s.chunk_index + 1);
+          chip.className = 'chip' + (s.via_graph ? ' graph-linked' : '');
+          chip.textContent = (s.via_graph ? '🔗 ' : '') + (s.ref ? '[' + s.ref + '] ' : '') + s.original_name + ' · đoạn ' + (s.chunk_index + 1);
+          if (s.via_graph) chip.title = 'Tìm thấy qua liên kết trong đồ thị tri thức, không khớp từ khóa trực tiếp với câu hỏi';
           sources.appendChild(chip);
         });
         body.appendChild(sources);
@@ -567,7 +587,10 @@
         fetch(aiForm.getAttribute('data-ask-url'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ question: question, model: select ? (select.value || null) : null, document_ids: selectedDocumentIds() }),
+          body: JSON.stringify({
+            question: question, model: select ? (select.value || null) : null,
+            document_ids: selectedDocumentIds(), chat_id: chatIdInput ? (chatIdInput.value || null) : null,
+          }),
         })
           .then(function (r) {
             return r.json().then(function (data) { return { ok: r.ok, data: data }; });
@@ -575,6 +598,10 @@
           .then(function (result) {
             if (result.ok) {
               renderAnswer(thinking, result.data);
+              // The first message of a new thread gets its chat_id generated
+              // server-side — capture it so the next question continues the
+              // same thread instead of starting yet another one.
+              if (chatIdInput && result.data.chat_id) chatIdInput.value = result.data.chat_id;
             } else {
               renderError(thinking, (result.data && result.data.detail) || 'Có lỗi xảy ra, thử lại sau.');
             }
@@ -782,7 +809,10 @@
     return result;
   }
   function attachMetadataEditor(metadataField) {
-    var metadataLabel = metadataField.closest('label.field');
+    // A plain .field div now (not <label>): the field's own text label lives
+    // in a persistent sibling .field-head (with the (i) help popover) that
+    // this wrap never touches, so it stays visible in both raw and visual mode.
+    var metadataLabel = metadataField.closest('.field');
     if (!metadataLabel || metadataField.kvAttached) return;
     metadataField.kvAttached = true;
     ensureKvDatalist();
@@ -803,9 +833,6 @@
     metadataLabel.parentNode.insertBefore(wrap, metadataLabel);
     wrap.appendChild(metadataLabel);
 
-    var editorTitle = document.createElement('div');
-    editorTitle.className = 'kv-editor-title';
-    editorTitle.textContent = 'Metadata bổ sung';
     var editorRoot = document.createElement('div');
     editorRoot.className = 'kv-editor';
     var kvError = document.createElement('p');
@@ -815,7 +842,6 @@
     toggleModeBtn.type = 'button';
     toggleModeBtn.className = 'kv-raw-toggle';
 
-    wrap.insertBefore(editorTitle, metadataLabel);
     wrap.insertBefore(editorRoot, metadataLabel);
     wrap.appendChild(kvError);
     wrap.appendChild(toggleModeBtn);
@@ -832,7 +858,6 @@
     function setMode(raw) {
       if (raw) {
         if (rootGroup) metadataField.value = JSON.stringify(serializeKvGroup(rootGroup), null, 2);
-        editorTitle.hidden = true;
         editorRoot.hidden = true;
         metadataLabel.hidden = false;
         toggleModeBtn.textContent = 'Quay lại dạng biểu mẫu';
@@ -845,7 +870,6 @@
         }
         kvError.hidden = true;
         rebuildVisual();
-        editorTitle.hidden = false;
         editorRoot.hidden = false;
         metadataLabel.hidden = true;
         toggleModeBtn.textContent = 'Xem / sửa JSON thô';

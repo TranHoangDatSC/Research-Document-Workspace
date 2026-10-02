@@ -117,6 +117,10 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .side-head { display: flex; align-items: center; justify-content: space-between; }
 .side-title { margin: 0 4px 6px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .side-head .side-title { margin-bottom: 0; }
+summary.side-head { list-style: none; cursor: pointer; }
+summary.side-head::-webkit-details-marker { display: none; }
+summary.side-head .side-title::before { content: '▸'; display: inline-block; margin-right: 5px; font-size: 9px; transition: transform .15s; }
+details[open] > summary.side-head .side-title::before { transform: rotate(90deg); }
 .stores { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .stores li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; font-size: 13px; color: var(--text); }
 .stores li .icon { color: var(--muted); }
@@ -483,6 +487,38 @@ a.source-main { cursor: pointer; }
 .shell.ai-enhanced .ai-panel .chat-form { flex: none; background: var(--surface); border-top: 1px solid var(--border); }
 .ai-panel-actions { display: flex; align-items: center; gap: 2px; }
 .ai-panel-actions form { margin: 0; }
+
+/* chat switcher: a <details> popover listing past threads, newest first */
+.ai-chat-switcher { position: relative; }
+.ai-chat-switcher summary { list-style: none; cursor: pointer; }
+.ai-chat-switcher summary::-webkit-details-marker { display: none; }
+.ai-chat-switcher[open] summary { background: var(--accent-soft); color: var(--accent); }
+.ai-chat-dropdown { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: 280px; max-height: 360px; overflow-y: auto; padding: 6px; background: var(--surface); border-radius: var(--radius-sm); box-shadow: var(--shadow-lift); }
+.ai-chat-list { display: grid; gap: 1px; }
+.ai-chat-item { display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.ai-chat-item:hover, .ai-chat-item.active { background: var(--surface-2); }
+.ai-chat-item.active { background: var(--accent-soft); }
+.ai-chat-item-link { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 8px 8px; color: var(--text); text-decoration: none; }
+.ai-chat-item-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
+.ai-chat-item-time { font-size: 10.5px; }
+.ai-chat-item-delete { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-right: 4px; border-radius: 7px; color: var(--muted); opacity: 0; text-decoration: none; }
+.ai-chat-item:hover .ai-chat-item-delete, .ai-chat-item-delete:focus-visible { opacity: 1; }
+.ai-chat-item-delete:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* a source chip pulled in via the entity graph instead of a direct keyword match */
+.chip.graph-linked { background: transparent; border: 1px dashed var(--accent); }
+
+/* document's entity/relation graph: connector rows instead of flat chips, so
+   the *link* between two entities actually reads as a graph edge */
+.graph-section { margin-top: 16px; }
+.graph-section:first-of-type { margin-top: 0; }
+.graph-section .side-title { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.graph-entities-chips { display: flex; flex-wrap: wrap; gap: 2px; }
+.graph-relations { display: grid; gap: 8px; }
+.graph-relation { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.graph-node { padding: 4px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.graph-edge { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 60px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.graph-edge::before, .graph-edge::after { content: ''; flex: 1; min-width: 12px; height: 1px; background: var(--border-strong); }
 .shell.ai-open .ai-panel { transform: none; }
 .shell.ai-open .ai-scrim { opacity: 1; pointer-events: auto; }
 .shell.ai-open .ai-fab { transform: scale(.4); opacity: 0; pointer-events: none; }
@@ -541,9 +577,20 @@ dialog.upload-modal { width: min(480px, 92vw); max-height: min(600px, 84vh); }
 .upload-modal-head h2 { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .upload-modal .doc-modal-body { padding: 14px 20px 18px; }
 
+/* a field's label + (i) guidance button, kept outside the kv-editor's wrap so
+   it stays visible in both raw-JSON and visual (key/value) mode */
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.field-label-text { font-size: 13.5px; font-weight: 600; }
+.kv-info { position: relative; }
+.kv-info summary { list-style: none; cursor: pointer; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.kv-info summary::-webkit-details-marker { display: none; }
+.kv-info[open] summary { background: var(--accent-soft); color: var(--accent); }
+.kv-info-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: 220px; padding: 12px 14px; background: var(--surface); border-radius: var(--radius-sm); box-shadow: var(--shadow-lift); }
+.kv-info-popover p { margin: 0 0 6px; font-size: 12.5px; line-height: 1.5; }
+.kv-info-popover p:last-child { margin-bottom: 0; }
+
 /* key/value metadata editor */
 .kv-wrap { margin-top: 4px; }
-.kv-editor-title { font-size: 13.5px; font-weight: 600; margin-bottom: 8px; }
 .kv-group { display: grid; gap: 8px; }
 .kv-row { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; background: var(--surface-2); }
 .kv-row-main { display: flex; align-items: flex-start; gap: 8px; }

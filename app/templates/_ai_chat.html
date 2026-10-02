@@ -4,7 +4,7 @@
   <div class="empty chat-empty">
     <span class="empty-icon">{{ icon('sparkles', 24) }}</span>
     <p><strong>Cuộc trò chuyện mới</strong></p>
-    <p class="muted small-text">Lịch sử đã được xóa. Đặt câu hỏi bên dưới để bắt đầu.</p>
+    <p class="muted small-text">Đặt câu hỏi bên dưới để bắt đầu.</p>
   </div>
 </template>
 <button type="button" class="ai-fab" id="ai-fab" hidden aria-controls="ai-panel" aria-expanded="false" title="Hỏi đáp AI">
@@ -15,9 +15,25 @@
   <div class="ai-panel-head">
     <h2>{{ icon('sparkles', 16) }}Hỏi đáp AI</h2>
     <div class="ai-panel-actions">
-      <form method="post" action="/ui/projects/{{ project.id }}/chat/clear" id="ai-clear-form" data-clear-url="/projects/{{ project.id }}/chat">
-        <button type="submit" class="icon-btn" title="Cuộc trò chuyện mới (xóa lịch sử)">{{ icon('refresh', 16) }}</button>
-      </form>
+      <details class="ai-chat-switcher" id="ai-chat-switcher">
+        <summary class="icon-btn" title="Lịch sử trò chuyện" aria-label="Lịch sử trò chuyện">{{ icon('layers', 16) }}</summary>
+        <div class="ai-chat-dropdown">
+          <div class="ai-chat-list">
+            {% for t in chat_threads %}
+            <div class="ai-chat-item{% if t.chat_id == current_chat_id %} active{% endif %}">
+              <a class="ai-chat-item-link" data-chat-id="{{ t.chat_id }}" href="?chat_id={{ t.chat_id }}{{ '&' ~ source_qs if source_qs else '' }}">
+                <span class="ai-chat-item-preview">{{ t.preview or 'Cuộc trò chuyện' }}</span>
+                <span class="ai-chat-item-time muted small-text">{{ t.updated_at|dt }}</span>
+              </a>
+              <a class="ai-chat-item-delete" href="/ui/projects/{{ project.id }}/chat/{{ t.chat_id }}/delete" data-confirm-delete title="Xóa cuộc trò chuyện này" aria-label="Xóa cuộc trò chuyện này">{{ icon('x', 12) }}</a>
+            </div>
+            {% else %}
+            <p class="side-empty">Chưa có cuộc trò chuyện nào.</p>
+            {% endfor %}
+          </div>
+        </div>
+      </details>
+      <a class="icon-btn" id="ai-new-chat" href="?chat_id=new{{ '&' ~ source_qs if source_qs else '' }}" title="Cuộc trò chuyện mới" aria-label="Cuộc trò chuyện mới">{{ icon('plus', 16) }}</a>
       <button type="button" class="icon-btn" id="ai-close" aria-controls="ai-panel" title="Đóng">{{ icon('x', 18) }}</button>
     </div>
   </div>
@@ -36,7 +52,7 @@
         <p class="md-source">{{ m.content }}</p>
         {% if m.sources %}
         <div class="chat-sources">
-          {% for s in m.sources %}<span class="chip">{{ icon('file', 12) }}{% if s.ref %}[{{ s.ref }}] {% endif %}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
+          {% for s in m.sources %}<span class="chip{% if s.via_graph %} graph-linked{% endif %}">{{ icon('file', 12) }}{% if s.via_graph %}🔗 {% endif %}{% if s.ref %}[{{ s.ref }}] {% endif %}{{ s.original_name }} · đoạn {{ s.chunk_index + 1 }}</span>{% endfor %}
         </div>
         {% endif %}
         {% if m.model %}<p class="chat-model muted small-text">{{ icon('info', 12) }}Mô hình: {{ m.model }}</p>{% endif %}
@@ -53,6 +69,7 @@
   </div>
 
   <form method="post" action="/ui/projects/{{ project.id }}/ask" class="chat-form" id="ai-form" data-ask-url="/projects/{{ project.id }}/ask">
+    <input type="hidden" name="chat_id" id="ai-chat-id-input" value="{{ current_chat_id or '' }}">
     {% if rag_models %}
     <details class="chat-options">
       <summary title="Tùy chọn mô hình">{{ icon('sliders', 12) }}<span>Tùy chọn mô hình</span></summary>

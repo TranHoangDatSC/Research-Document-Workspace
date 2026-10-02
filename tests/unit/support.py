@@ -212,6 +212,10 @@ class FakeBackend:
         self._check("mongo")
         self.details[str(document_id)]["extracted_text"] = extracted
 
+    def update_entity_graph(self, document_id, graph):
+        self._check("mongo")
+        self.details[str(document_id)]["entity_graph"] = graph
+
     def count_with_text(self, document_ids):
         self._check("mongo")
         ids = {str(i) for i in document_ids}
@@ -221,26 +225,46 @@ class FakeBackend:
         self._check("mongo")
         self.details[str(document_id)].update(tags=tags, authors=authors, custom_metadata=custom_metadata)
 
-    # ----- MongoDB: chat history -----
+    # ----- MongoDB: chat history (one project/user can hold several threads, told apart by chat_id) -----
     def add_messages(self, messages):
         self._check("mongo")
         now = self._now()
         for seq, m in enumerate(messages):
-            self.chats.append({**m, "project_id": str(m["project_id"]), "user_id": str(m["user_id"]), "created_at": now, "seq": seq})
+            self.chats.append({
+                **m, "project_id": str(m["project_id"]), "user_id": str(m["user_id"]),
+                "chat_id": str(m["chat_id"]), "created_at": now, "seq": seq,
+            })
 
-    def list_messages(self, project_id, user_id, limit):
+    def list_messages(self, project_id, user_id, chat_id, limit):
         self._check("mongo")
         mine = [
             {k: v for k, v in m.items()}
             for m in self.chats
-            if m["project_id"] == str(project_id) and m["user_id"] == str(user_id)
+            if m["project_id"] == str(project_id) and m["user_id"] == str(user_id) and m["chat_id"] == str(chat_id)
         ]
         return mine[-limit:]
 
-    def clear_chat(self, project_id, user_id):
+    def list_chats(self, project_id, user_id):
+        self._check("mongo")
+        mine = [
+            m for m in self.chats
+            if m["project_id"] == str(project_id) and m["user_id"] == str(user_id)
+        ]
+        threads = {}
+        for m in mine:  # stored in insertion order = chronological
+            entry = threads.setdefault(m["chat_id"], {"chat_id": m["chat_id"], "preview": None, "updated_at": m["created_at"]})
+            entry["updated_at"] = m["created_at"]
+            if entry["preview"] is None and m.get("role") == "user":
+                entry["preview"] = m["content"][:140]
+        return sorted(threads.values(), key=lambda t: t["updated_at"], reverse=True)
+
+    def delete_chat(self, project_id, user_id, chat_id):
         self._check("mongo")
         before = len(self.chats)
-        self.chats = [m for m in self.chats if not (m["project_id"] == str(project_id) and m["user_id"] == str(user_id))]
+        self.chats = [
+            m for m in self.chats
+            if not (m["project_id"] == str(project_id) and m["user_id"] == str(user_id) and m["chat_id"] == str(chat_id))
+        ]
         return before - len(self.chats)
 
     def delete_project_chats(self, project_id):
@@ -392,12 +416,13 @@ class FakeBackend:
                 name: getattr(self, name) for name in (
                     "project_exists", "get_document", "get_owned_document", "create_pending", "mark_ready", "mark_failed",
                     "list_documents", "list_all_documents", "extension_totals", "begin_delete", "finish_delete",
-                    "insert_details", "get_details", "delete_details", "update_extracted_text", "update_details", "count_with_text",
+                    "insert_details", "get_details", "delete_details", "update_extracted_text", "update_entity_graph",
+                    "update_details", "count_with_text",
                 )
             },
             chats_repo: {
-                "add_messages": self.add_messages, "list_messages": self.list_messages,
-                "clear": self.clear_chat, "delete_project": self.delete_project_chats,
+                "add_messages": self.add_messages, "list_messages": self.list_messages, "list_chats": self.list_chats,
+                "delete_chat": self.delete_chat, "delete_project": self.delete_project_chats,
             },
             users_repo: {
                 "create_user": self.create_user, "get_by_username": self.get_by_username,

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPException
 from fastapi.templating import Jinja2Templates
@@ -42,7 +42,7 @@ templates.env.filters["status_label"] = lambda status: branding.STATUS_LABELS.ge
 # Fields stored in PostgreSQL; everything else in a merged document comes from MongoDB.
 SQL_FIELDS = {"id", "project_id", "original_name", "object_name", "content_type", "size_bytes", "status", "created_at"}
 
-SIDEBAR_RECENT_PROJECTS = 3
+SIDEBAR_RECENT_PROJECTS = 5
 
 def sidebar_projects():
     # Navigation must never break a page: on any storage error show an empty list.
@@ -269,12 +269,14 @@ def sources_context(project_id, offset, q, kind):
     }
 
 @router.get("/ui/projects/{project_id}")
-def project_page(request: Request, project_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20)):
+def project_page(request: Request, project_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20), chat_id: str = Query(default="", max_length=100)):
     project = projects.get_project(project_id)
+    messages, resolved_chat_id = chat_history(request, project_id, chat_id or None)
     return render(
         request, "project_detail.html", project=project, active_project_id=project["id"],
         kind_totals=documents.kind_totals(project_id), ai_ready=documents.ai_ready_count(project_id), rag_models=llm.available_models(),
-        chat_messages=chat_history(request, project_id), **sources_context(project_id, offset, q, kind),
+        chat_messages=messages, current_chat_id=resolved_chat_id, chat_threads=rag_service.list_chat_threads(project_id, current_user_id(request)),
+        **sources_context(project_id, offset, q, kind),
     )
 
 @router.get("/ui/projects/{project_id}/edit")
@@ -312,31 +314,55 @@ def current_user_id(request):
     user = getattr(request.state, "user", None)
     return user["user_id"] if user else None
 
-def chat_history(request, project_id):
+def chat_history(request, project_id, chat_id=None):
+    """(messages, resolved_chat_id). chat_id="new" is a sentinel from the
+    no-JS "+ Cuộc trò chuyện mới" link: show an empty thread, and hand back a
+    freshly generated (message-less) id instead of resolving to the most
+    recent one, so the ask-form's hidden field carries a genuinely new
+    thread forward even without JS to generate one client-side."""
     user_id = current_user_id(request)
-    return rag_service.get_history(project_id, user_id) if user_id else []
+    if not user_id:
+        return [], None
+    if chat_id == "new":
+        return [], str(uuid4())
+    return rag_service.get_history(project_id, user_id, chat_id)
 
 @router.post("/ui/projects/{project_id}/ask")
-def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = "", document_ids: Annotated[list[str], Form()] = []):
+def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = "", document_ids: Annotated[list[str], Form()] = [], chat_id: Annotated[str, Form(max_length=100)] = ""):
     projects.get_project(project_id)
-    rag_service.ask_project(project_id, question, model or None, document_ids or None, user_id=current_user_id(request))
-    # The exchange is now in the stored history, which the project page renders.
+    rag_service.ask_project(project_id, question, model or None, document_ids or None, user_id=current_user_id(request), chat_id=chat_id or None)
+    # The exchange is now in the stored history, which the project page
+    # renders — and that thread is now the most recently used one, so a plain
+    # reload (no chat_id needed) lands back on it.
     return RedirectResponse(f"/ui/projects/{project_id}#ai-panel", status_code=303)
 
-@router.post("/ui/projects/{project_id}/chat/clear")
-def clear_chat(request: Request, project_id: UUID):
-    rag_service.clear_history(project_id, current_user_id(request))
+@router.get("/ui/projects/{project_id}/chat/{chat_id}/delete")
+def confirm_delete_chat(request: Request, project_id: UUID, chat_id: str):
+    project = projects.get_project(project_id)
+    threads = rag_service.list_chat_threads(project_id, current_user_id(request))
+    thread = next((t for t in threads if t["chat_id"] == chat_id), None)
+    if thread is None:
+        raise HTTPException(404, "Chat not found")
+    return render(request, "delete_chat.html", project=project, active_project_id=project["id"], chat_id=chat_id, chat_preview=thread["preview"])
+
+@router.post("/ui/projects/{project_id}/chat/{chat_id}/delete")
+def delete_chat(request: Request, project_id: UUID, chat_id: str, confirm: Annotated[str, Form()] = ""):
+    if confirm != "delete":
+        raise HTTPException(422, "Cần xác nhận xóa cuộc trò chuyện.")
+    rag_service.delete_chat(project_id, current_user_id(request), chat_id)
     return RedirectResponse(f"/ui/projects/{project_id}", status_code=303)
 
 @router.get("/ui/documents/{document_id}")
-def document_page(request: Request, document_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20)):
+def document_page(request: Request, document_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20), chat_id: str = Query(default="", max_length=100)):
     row = documents.get_document(document_id)
     project = projects.get_project(row["project_id"])
     mongo_document = {k: v for k, v in row.items() if k not in SQL_FIELDS}
+    messages, resolved_chat_id = chat_history(request, project["id"], chat_id or None)
     return render(
         request, "document_detail.html", document=row, project=project, active_project_id=project["id"],
         mongo_document=mongo_document, active_document_id=row["id"], rag_models=llm.available_models(),
-        chat_messages=chat_history(request, project["id"]), **sources_context(project["id"], offset, q, kind),
+        chat_messages=messages, current_chat_id=resolved_chat_id, chat_threads=rag_service.list_chat_threads(project["id"], current_user_id(request)),
+        **sources_context(project["id"], offset, q, kind),
     )
 
 @router.get("/ui/documents/{document_id}/edit")
@@ -354,6 +380,11 @@ def edit_document(request: Request, document_id: UUID, tags: Annotated[str, Form
 def extract(request: Request, document_id: UUID):
     documents.extract_document(document_id)
     # Land back on the extracted-text tab, not the default "Thông tin" tab (app.js reads the hash).
+    return RedirectResponse(f"/ui/documents/{document_id}#extract", status_code=303)
+
+@router.post("/ui/documents/{document_id}/graph")
+def extract_graph(request: Request, document_id: UUID):
+    documents.extract_entity_graph(document_id)
     return RedirectResponse(f"/ui/documents/{document_id}#extract", status_code=303)
 
 @router.get("/ui/documents/{document_id}/delete")
