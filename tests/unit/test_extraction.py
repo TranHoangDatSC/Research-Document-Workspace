@@ -15,6 +15,7 @@ from pypdf import PdfWriter
 
 from support import FakeBackend
 
+from app import llm
 from app.services import documents as documents_service
 from app.extractors import MAX_EXTRACTED_CHARACTERS, MAX_INPUT_BYTES, ExtractionError, extract_text
 
@@ -363,6 +364,107 @@ class ExtractDocumentTests(unittest.TestCase):
                 self.assertEqual(self.extract(document_id).status_code, 503)
         self.backend.fail = set()
         self.assertEqual(self.backend.details[document_id]["extracted_text"]["text"], "hello")  # from upload, untouched
+
+
+class ExtractEntityGraphTests(unittest.TestCase):
+    """"Tạo đồ thị thực thể": an explicit button, never triggered by an
+    upload or a text extraction on its own — both of those must never call
+    the model (see test_never_triggered_by_upload_or_text_extraction)."""
+
+    def setUp(self):
+        self.backend = FakeBackend().install(self)
+        self.client = self.backend.client(self)
+        self.project_id = self.client.post("/projects", json={"name": "P"}).json()["id"]
+
+    def upload(self, name, content):
+        response = self.client.post(f"/projects/{self.project_id}/documents", files={"file": (name, content)})
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()["id"]
+
+    def ask_model(self, answer=None, error=None):
+        def fake_ask(prompt, **kw):
+            if error:
+                raise llm.LLMError(error)
+            return answer, "fake-model"
+        return patch.object(llm, "ask", fake_ask)
+
+    def graph(self, document_id):
+        return self.client.post(f"/documents/{document_id}/graph")
+
+    def test_never_triggered_by_upload_or_text_extraction(self):
+        with patch.object(llm, "ask") as mock_ask:
+            self.upload("a.txt", b"Project Zephyr notes.")
+        mock_ask.assert_not_called()
+
+    def test_needs_extracted_text_first(self):
+        document_id = self.upload("clip.mp4", b"x")  # media: no auto-extraction
+        with patch.object(llm, "ask") as mock_ask:
+            response = self.graph(document_id)
+        self.assertEqual(response.status_code, 409)
+        mock_ask.assert_not_called()
+
+    def test_success_persists_entities_and_relations(self):
+        document_id = self.upload("a.txt", b"Tien is advised by Khiet.")
+        answer = '{"entities": ["Tien", "Khiet"], "relations": [{"subject": "Tien", "relation": "advised by", "object": "Khiet"}]}'
+        with self.ask_model(answer=answer):
+            response = self.graph(document_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.backend.details[document_id]["entity_graph"]
+        self.assertEqual(stored["entities"], ["Tien", "Khiet"])
+        self.assertEqual(stored["relations"][0]["object"], "Khiet")
+        # What the API returns is exactly what was stored.
+        self.assertEqual(response.json()["entity_graph"], stored)
+
+    def test_llm_failure_is_503_and_saves_nothing(self):
+        document_id = self.upload("a.txt", b"hello")
+        with self.ask_model(error="simulated failure"):
+            response = self.graph(document_id)
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("entity_graph", self.backend.details[document_id])
+
+    def test_unparseable_model_output_is_503(self):
+        document_id = self.upload("a.txt", b"hello")
+        with self.ask_model(answer="not json"):
+            response = self.graph(document_id)
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("entity_graph", self.backend.details[document_id])
+
+    def test_not_ready_document_is_409(self):
+        document_id = self.upload("a.txt", b"hello")
+        self.backend.documents[UUID(document_id)]["status"] = "pending"
+        with patch.object(llm, "ask") as mock_ask:
+            self.assertEqual(self.graph(document_id).status_code, 409)
+        mock_ask.assert_not_called()
+
+    def test_mongo_failure_reading_is_503(self):
+        document_id = self.upload("a.txt", b"hello")
+        self.backend.fail = {"mongo"}
+        with patch.object(llm, "ask") as mock_ask:
+            response = self.graph(document_id)
+        self.backend.fail = set()
+        self.assertEqual(response.status_code, 503)
+        mock_ask.assert_not_called()  # failed before ever reaching the model
+
+    def test_mongo_failure_persisting_is_503(self):
+        document_id = self.upload("a.txt", b"hello")
+
+        def fake_ask(prompt, **kw):
+            # The read (get_details) already succeeded by the time the model
+            # answers; failing mongo here isolates the later persist step.
+            self.backend.fail = {"mongo"}
+            return '{"entities": [], "relations": []}', "fake-model"
+
+        with patch.object(llm, "ask", fake_ask):
+            response = self.graph(document_id)
+        self.backend.fail = set()
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("entity_graph", self.backend.details[document_id])
+
+    def test_ui_button_redirects_to_the_extract_tab(self):
+        document_id = self.upload("a.txt", b"hello")
+        with self.ask_model(answer='{"entities": [], "relations": []}'):
+            response = self.client.post(f"/ui/documents/{document_id}/graph", follow_redirects=False)
+        self.assertEqual(response.headers["location"], f"/ui/documents/{document_id}#extract")
 
 
 if __name__ == "__main__":

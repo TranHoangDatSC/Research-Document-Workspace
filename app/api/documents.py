@@ -65,3 +65,8 @@ def delete_document(document_id: UUID):
 @router.post("/documents/{document_id}/extract")
 def extract_document(document_id: UUID):
     return service.extract_document(document_id)
+
+
+@router.post("/documents/{document_id}/graph")
+def extract_entity_graph(document_id: UUID):
+    return service.extract_entity_graph(document_id)

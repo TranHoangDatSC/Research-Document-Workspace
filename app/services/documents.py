@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from app import access, extractors, file_types, media_ai
+from app import graph as entity_graph
 from app.bootstrap import bucket_name
 from app.extractors import MAX_INPUT_BYTES as EXTRACT_MAX_BYTES, ExtractionError, extract_text
 from app.repositories import documents as repository
@@ -462,4 +463,33 @@ def extract_document(document_id):
         "document_extracted document_id=%s method=%s characters=%s truncated=%s",
         document_id, result.method, result.character_count, result.truncated,
     )
+    return get_document(document_id)
+
+
+def extract_entity_graph(document_id):
+    """"Tạo đồ thị thực thể" button: explicit, not automatic — like media's
+    "Phân tích bằng AI", this costs one LLM call, so it's the person's choice,
+    never something an upload or a text extraction triggers on its own (see
+    extract_document above, which only auto-runs the local/free parsers).
+    Needs extracted text first; failures are real errors here (unlike a
+    hypothetical automatic path, a person who clicked a button deserves to
+    know it didn't work), but an existing entity_graph is left untouched if
+    this fails, so a bad retry can't erase a previous good extraction."""
+    row = document_row(document_id)
+    require_ready(row)
+    try:
+        details = repository.get_details(document_id)
+    except Exception as exc:
+        raise storage_error("graph-read", exc, document_id) from None
+    text = ((details or {}).get("extracted_text") or {}).get("text") or ""
+    if not text.strip():
+        raise HTTPException(409, "Trích xuất văn bản trước khi tạo đồ thị thực thể.")
+    graph = entity_graph.extract_graph(text)
+    if graph is None:
+        raise HTTPException(503, "Không tạo được đồ thị thực thể lúc này (model lỗi hoặc phản hồi không đúng định dạng); thử lại sau.")
+    try:
+        repository.update_entity_graph(document_id, graph)
+    except Exception as exc:
+        raise storage_error("graph-persist", exc, document_id) from None
+    log.info("document_graph_extracted document_id=%s entities=%s relations=%s", document_id, len(graph["entities"]), len(graph["relations"]))
     return get_document(document_id)

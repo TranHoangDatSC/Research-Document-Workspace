@@ -128,6 +128,13 @@ def update_extracted_text(document_id, extracted):
         )
 
 
+def update_entity_graph(document_id, graph):
+    with mongo_client() as client:
+        client[os.environ["MONGO_DB"]]["document_details"].update_one(
+            {"document_id": str(document_id)}, {"$set": {"entity_graph": graph}}
+        )
+
+
 def update_details(document_id, tags, authors, custom_metadata):
     with mongo_client() as client:
         client[os.environ["MONGO_DB"]]["document_details"].update_one(
