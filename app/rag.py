@@ -9,7 +9,11 @@ by app/services/rag.py:
 - BM25: otherwise, chunks are ranked with Okapi BM25 over diacritic-folded
   tokens (Vietnamese stopwords removed) plus adjacent-syllable bigrams, since
   Vietnamese words are mostly two syllables ("học sinh", "chính trị") and a
-  bag of single syllables loses that.
+  bag of single syllables loses that. `expand_by_shared_terms` then adds a
+  graph-lite hop on top: chunks connected to a BM25 hit through a shared rare
+  term (a name, a project title) get pulled in too, even without matching the
+  question's own words — see its docstring for the no-infrastructure design
+  and where a real entity/relation graph would plug in later.
 
 Chunks are numbered [1]..[n] in the prompt; the model cites those numbers and
 `cited_chunks` maps them back, so the sources shown are the ones actually used.
@@ -157,6 +161,70 @@ def rank_chunks(question, chunks, top_k=TOP_K, min_relative_score=MIN_RELATIVE_S
     scored.sort(key=lambda pair: pair[0], reverse=True)
     floor = scored[0][0] * min_relative_score
     return [chunk for score, chunk in scored[:top_k] if score >= floor]
+
+
+def _chunk_key(chunk):
+    return (chunk["document_id"], chunk["chunk_index"])
+
+
+def _rare_terms(term_lists, max_chunk_fraction=0.3, max_chunks=3):
+    """Terms present in only a few chunks. In a small corpus a word repeated
+    everywhere ("nghiên cứu", "dữ liệu"...) says nothing about which chunks
+    belong together, but a name, a project title or a place that recurs in
+    just a couple of chunks is a real signal connecting them — the same
+    intuition behind TF-IDF/BM25's own idf term, reused here as a graph edge
+    filter instead of a ranking weight."""
+    total = len(term_lists)
+    if not total:
+        return set()
+    counts = Counter()
+    for terms in term_lists:
+        counts.update(set(terms))
+    limit = max(1, min(max_chunks, int(total * max_chunk_fraction)))
+    return {term for term, n in counts.items() if n <= limit}
+
+
+def expand_by_shared_terms(selected, chunks, max_extra=2):
+    """Graph-lite retrieval augmentation: no entities, no embeddings, no extra
+    LLM call — just the existing BM25 term index read as an implicit graph (a
+    rare term is an edge; a chunk is a node) and walked one hop out from the
+    chunks BM25 already selected. Pulls in chunks that share a specific
+    name/title/place with a selected chunk even when they share no words
+    with the QUESTION itself — the multi-hop case plain keyword overlap
+    misses ("tài liệu nào liên quan đến đề tài do X hướng dẫn?" when the
+    connecting chunk never mentions X, only the shared project name does).
+
+    A real entity/relation graph (extracted once per document — e.g. one LLM
+    call at extraction time, stored in MongoDB) would replace the "rare term"
+    signal below with actual named entities and typed relations; this
+    function is where that would plug in, the one-hop walk stays the same.
+    """
+    if not selected or max_extra <= 0 or len(selected) >= len(chunks):
+        return selected
+    terms_by_key = {_chunk_key(c): tokenize(c["text"]) for c in chunks}
+    rare = _rare_terms(terms_by_key.values())
+    if not rare:
+        return selected
+
+    selected_keys = {_chunk_key(c) for c in selected}
+    anchor_terms = set()
+    for chunk in selected:
+        anchor_terms |= set(terms_by_key[_chunk_key(chunk)]) & rare
+    if not anchor_terms:
+        return selected
+
+    candidates = []
+    for chunk in chunks:
+        key = _chunk_key(chunk)
+        if key in selected_keys:
+            continue
+        shared = anchor_terms & set(terms_by_key[key])
+        if shared:
+            candidates.append((len(shared), chunk))
+    if not candidates:
+        return selected
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    return selected + [chunk for _, chunk in candidates[:max_extra]]
 
 
 def order_for_reading(chunks):

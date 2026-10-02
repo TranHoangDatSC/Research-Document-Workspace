@@ -95,15 +95,16 @@ def _system_instruction(domain):
 
 
 def _select_chunks(question, chunks, total_characters, domain, history):
-    """(numbered chunks for the prompt, full_text flag)."""
+    """(numbered chunks for the prompt, full_text flag, chunks added by graph expansion)."""
     if total_characters <= domain.full_text_max_chars:
-        return chunks, True
+        return chunks, True, 0
     # A follow-up ("explain that further") has almost no searchable words of
     # its own; the previous question carries the topic.
     previous = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     query = f"{previous}\n{question}" if previous else question
     ranked = rag.rank_chunks(query, chunks, domain.top_k, domain.min_relative_score)
-    return rag.order_for_reading(ranked), False
+    expanded = rag.expand_by_shared_terms(ranked, chunks, domain.graph_expansion_max_chunks)
+    return rag.order_for_reading(expanded), False, len(expanded) - len(ranked)
 
 
 def ask_project(project_id, question, model=None, document_ids=None, user_id=None):
@@ -156,7 +157,7 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
 
     total_characters = sum(len((d.get("extracted_text") or {}).get("text") or "") for d in documents)
     history = _load_history(project_id, user_id)
-    numbered, full_text = _select_chunks(question, chunks, total_characters, domain, history)
+    numbered, full_text, graph_expanded = _select_chunks(question, chunks, total_characters, domain, history)
     prompt = rag.build_prompt(question, numbered, full_text=full_text)
 
     try:
@@ -171,8 +172,9 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
 
     cited = rag.cited_chunks(answer, numbered)
     log.info(
-        "project_asked project_id=%s domain=%s mode=%s chunks_sent=%s chunks_cited=%s history=%s model=%s",
-        project_id, domain.name, "full_text" if full_text else "bm25", len(numbered), len(cited), len(history), model_used,
+        "project_asked project_id=%s domain=%s mode=%s chunks_sent=%s chunks_graph_expanded=%s chunks_cited=%s history=%s model=%s",
+        project_id, domain.name, "full_text" if full_text else "bm25",
+        len(numbered), graph_expanded, len(cited), len(history), model_used,
     )
     result = {
         "answer": answer,

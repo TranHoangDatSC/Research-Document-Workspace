@@ -43,6 +43,13 @@ class Domain:
     # Retrieval drops chunks scoring below this fraction of the best chunk's
     # score, so a weak one-word match doesn't pad the context with noise.
     min_relative_score: float
+    # After BM25 picks the top_k chunks, pull in up to this many more that
+    # share a rare term (a name, a project title) with one of them — a
+    # graph-lite hop that catches multi-hop questions BM25 alone misses
+    # (see rag.expand_by_shared_terms). 0 disables it. Defaulted here (not
+    # just in _load below) so existing direct Domain(...) construction —
+    # tests, mainly — doesn't have to know about it.
+    graph_expansion_max_chunks: int = 2
 
 
 def _read_canon(folder: Path) -> str:
@@ -78,6 +85,7 @@ def _load(name: str) -> Domain:
         top_k=int(retrieval.get("top_k", 8)),
         full_text_max_chars=int(retrieval.get("full_text_max_chars", 120_000)),
         min_relative_score=float(retrieval.get("min_relative_score", 0.25)),
+        graph_expansion_max_chunks=int(retrieval.get("graph_expansion_max_chunks", 2)),
     )
 
 

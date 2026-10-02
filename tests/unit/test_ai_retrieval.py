@@ -122,6 +122,60 @@ class RankChunksTests(unittest.TestCase):
         self.assertEqual([c["document_id"] for c in ranked], ["1"])
 
 
+class ExpandByGraphTests(unittest.TestCase):
+    """app.rag.expand_by_shared_terms: the graph-lite BM25 term-sharing hop."""
+
+    def _filler(self, n, document_id="2"):
+        return [
+            {"document_id": document_id, "original_name": "b", "chunk_index": i, "text": f"Unrelated filler passage {i} about something else entirely."}
+            for i in range(n)
+        ]
+
+    def _zephyr_corpus(self):
+        # Two chunks share "zephyr", a name specific enough to appear nowhere
+        # else; five filler chunks keep the corpus big enough that it stays
+        # below the rare-term chunk-count threshold.
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "Project Zephyr kickoff meeting and budget."},
+            {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "Project Zephyr is advised by Professor Nguyen."},
+        ]
+        return chunks + self._filler(5)
+
+    def test_pulls_in_chunk_sharing_a_rare_term(self):
+        chunks = self._zephyr_corpus()
+        self.assertEqual(rag.expand_by_shared_terms([chunks[0]], chunks, max_extra=2), [chunks[0], chunks[1]])
+
+    def test_disabled_when_max_extra_is_zero(self):
+        chunks = self._zephyr_corpus()
+        self.assertEqual(rag.expand_by_shared_terms([chunks[0]], chunks, max_extra=0), [chunks[0]])
+
+    def test_no_change_when_nothing_was_selected(self):
+        chunks = self._zephyr_corpus()
+        self.assertEqual(rag.expand_by_shared_terms([], chunks, max_extra=2), [])
+
+    def test_no_expansion_without_a_shared_rare_term(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "completely generic text"},
+            {"document_id": "2", "original_name": "b", "chunk_index": 0, "text": "another unrelated passage"},
+        ]
+        self.assertEqual(rag.expand_by_shared_terms([chunks[0]], chunks, max_extra=2), [chunks[0]])
+
+    def test_never_duplicates_an_already_selected_chunk(self):
+        chunks = self._zephyr_corpus()
+        self.assertEqual(rag.expand_by_shared_terms([chunks[0], chunks[1]], chunks, max_extra=2), [chunks[0], chunks[1]])
+
+    def test_respects_max_extra_cap(self):
+        # "orion" appears in exactly 3 chunks — the selected one plus two
+        # candidates — right at the edge of still counting as rare; max_extra=1
+        # forces only one of the two qualifying candidates to be added.
+        base = {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "Orion project overview and scope."}
+        candidate_a = {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "Orion mentioned again here."}
+        candidate_b = {"document_id": "1", "original_name": "a", "chunk_index": 2, "text": "Orion mentioned once more."}
+        chunks = [base, candidate_a, candidate_b] + self._filler(8)
+        expanded = rag.expand_by_shared_terms([base], chunks, max_extra=1)
+        self.assertEqual(len(expanded), 2)  # base + exactly 1, even though 2 qualify
+
+
 class OrderForReadingTests(unittest.TestCase):
     def test_groups_by_document_then_chunk_order(self):
         chunks = [

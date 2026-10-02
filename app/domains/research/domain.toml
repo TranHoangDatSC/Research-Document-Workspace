@@ -14,3 +14,7 @@ top_k = 8
 # ~120k ký tự ≈ 35–40k token: dưới ngưỡng này gửi TOÀN VĂN, không cần xếp hạng.
 full_text_max_chars = 120000
 min_relative_score = 0.25
+# Thêm tối đa 2 đoạn nối với top_k qua một tên riêng/thuật ngữ hiếm dùng chung
+# (xem rag.expand_by_shared_terms) — bắt được câu hỏi đa bước ("tài liệu nào
+# liên quan đến đề tài do X hướng dẫn?") mà BM25 một mình bỏ sót.
+graph_expansion_max_chunks = 2
