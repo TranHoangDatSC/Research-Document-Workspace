@@ -37,3 +37,7 @@ logs/
 # Private AI domain packs (app/domains/). Research is the committed one until
 # the thesis report is done; then swap: ignore research, commit novel.
 /app/domains/novel/
+
+# Secrets documentation and local environment
+docs/deploy-guide-bkns.md
+docs/sercet-management.md
