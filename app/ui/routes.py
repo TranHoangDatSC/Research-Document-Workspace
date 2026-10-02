@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse
+from markupsafe import Markup, escape
 from pydantic import ValidationError
 from app import auth as core_auth, branding, file_types, llm, mailer, ratelimit
 from app.api.health import health_ready
@@ -29,6 +30,10 @@ templates.env.filters["file_kind"] = lambda doc: file_types.kind_of(doc["object_
 templates.env.globals["upload_accept"] = file_types.accept_attribute
 templates.env.globals["upload_limits_json"] = lambda: json.dumps(file_types.limits_by_extension())
 templates.env.globals["upload_summary"] = file_types.summary
+# JSON embedded in an HTML attribute (entity graph data for app.js to draw) —
+# unlike upload_limits_json above, this carries LLM-extracted text (entity
+# names), which can contain quotes, so it must be HTML-escaped, not just JSON-encoded.
+templates.env.filters["to_json_attr"] = lambda data: Markup(escape(json.dumps(data, ensure_ascii=False)))
 # Cache-busts /static/* on every process start so a redeploy can't get stuck
 # behind a browser's cached style.css/app.js.
 templates.env.globals["asset_version"] = str(int(time.time()))
@@ -330,7 +335,9 @@ def chat_history(request, project_id, chat_id=None):
 @router.post("/ui/projects/{project_id}/ask")
 def ask_project(request: Request, project_id: UUID, question: Annotated[str, Form(max_length=2000)] = "", model: Annotated[str, Form(max_length=100)] = "", document_ids: Annotated[list[str], Form()] = [], chat_id: Annotated[str, Form(max_length=100)] = ""):
     projects.get_project(project_id)
-    rag_service.ask_project(project_id, question, model or None, document_ids or None, user_id=current_user_id(request), chat_id=chat_id or None)
+    user_id = current_user_id(request)
+    ratelimit.check("ask", request, user_id=user_id)
+    rag_service.ask_project(project_id, question, model or None, document_ids or None, user_id=user_id, chat_id=chat_id or None)
     # The exchange is now in the stored history, which the project page
     # renders — and that thread is now the most recently used one, so a plain
     # reload (no chat_id needed) lands back on it.

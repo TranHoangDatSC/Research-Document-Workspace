@@ -365,6 +365,156 @@
   }
   initDocTabs(document);
 
+  // ----- entity graph: force-directed 2D network (plain SVG + a small
+  // hand-rolled physics loop, no charting library) with draggable nodes, on
+  // top of the always-rendered text list (data-graph-viz lives on that same
+  // element so the SVG is a pure enhancement — JS off still shows the list). -----
+  function enhanceEntityGraphs(root) {
+    if (!window.SVGElement) return;
+    Array.prototype.forEach.call(root.querySelectorAll('[data-graph-viz]'), function (el) {
+      if (el.classList.contains('graph-enhanced')) return;
+      var data;
+      try { data = JSON.parse(el.getAttribute('data-graph') || '{}'); } catch (e) { return; }
+      var entities = data.entities || [], relations = data.relations || [];
+      if (entities.length < 2 || !relations.length) return; // the text list is already enough
+      drawEntityGraph(el, entities, relations);
+    });
+  }
+
+  function drawEntityGraph(container, entities, relations) {
+    var width = Math.max(320, container.clientWidth || 600), height = 380;
+    var nodes = entities.map(function (name, i) {
+      var angle = (i / entities.length) * Math.PI * 2;
+      return { name: name, x: width / 2 + Math.cos(angle) * 90, y: height / 2 + Math.sin(angle) * 90, vx: 0, vy: 0 };
+    });
+    var byName = {};
+    nodes.forEach(function (n) { byName[n.name] = n; });
+    var links = relations
+      .map(function (r) { return { source: byName[r.subject], target: byName[r.object], label: r.relation || '' }; })
+      .filter(function (l) { return l.source && l.target && l.source !== l.target; });
+    if (!links.length) return;
+
+    // Simple force layout: every pair repels, linked pairs spring toward a
+    // rest length, everything drifts gently back to center — settled once
+    // (not animated continuously), then nodes stay put until dragged.
+    var alpha = 1;
+    for (var tick = 0; tick < 260; tick++) {
+      for (var i = 0; i < nodes.length; i++) {
+        for (var j = i + 1; j < nodes.length; j++) {
+          var a = nodes[i], b = nodes[j];
+          var dx = a.x - b.x, dy = a.y - b.y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          var force = (2400 / (dist * dist)) * alpha;
+          var fx = (dx / dist) * force, fy = (dy / dist) * force;
+          a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+        }
+      }
+      links.forEach(function (l) {
+        var dx = l.target.x - l.source.x, dy = l.target.y - l.source.y;
+        var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        var force = (dist - 150) * 0.02 * alpha;
+        var fx = (dx / dist) * force, fy = (dy / dist) * force;
+        l.source.vx += fx; l.source.vy += fy; l.target.vx -= fx; l.target.vy -= fy;
+      });
+      nodes.forEach(function (n) {
+        n.vx += (width / 2 - n.x) * 0.0015 * alpha;
+        n.vy += (height / 2 - n.y) * 0.0015 * alpha;
+        n.vx *= 0.82; n.vy *= 0.82;
+        n.x += n.vx; n.y += n.vy;
+        n.x = Math.max(40, Math.min(width - 40, n.x));
+        n.y = Math.max(28, Math.min(height - 28, n.y));
+      });
+      alpha *= 0.985;
+    }
+
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+    svg.setAttribute('class', 'graph-svg');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Sơ đồ quan hệ giữa các thực thể, kéo được từng nút');
+    var linkGroup = document.createElementNS(ns, 'g');
+    var labelGroup = document.createElementNS(ns, 'g');
+    var nodeGroup = document.createElementNS(ns, 'g');
+    svg.appendChild(linkGroup); svg.appendChild(labelGroup); svg.appendChild(nodeGroup);
+
+    var linkEls = links.map(function (l) {
+      var line = document.createElementNS(ns, 'line');
+      line.setAttribute('class', 'graph-link');
+      linkGroup.appendChild(line);
+      var label = document.createElementNS(ns, 'text');
+      label.setAttribute('class', 'graph-link-label');
+      label.setAttribute('text-anchor', 'middle');
+      label.textContent = l.label;
+      labelGroup.appendChild(label);
+      return { line: line, label: label, data: l };
+    });
+    var nodeEls = nodes.map(function (n) {
+      var g = document.createElementNS(ns, 'g');
+      g.setAttribute('class', 'graph-node-g');
+      g.setAttribute('tabindex', '0');
+      var r = Math.min(52, Math.max(24, 14 + n.name.length * 1.6));
+      var circle = document.createElementNS(ns, 'circle');
+      circle.setAttribute('r', r);
+      circle.setAttribute('class', 'graph-node-circle');
+      var text = document.createElementNS(ns, 'text');
+      text.setAttribute('class', 'graph-node-label');
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('dy', '0.32em');
+      text.textContent = n.name.length > 16 ? n.name.slice(0, 15) + '…' : n.name;
+      g.appendChild(circle); g.appendChild(text);
+      var titleEl = document.createElementNS(ns, 'title');
+      titleEl.textContent = n.name;
+      g.appendChild(titleEl);
+      nodeGroup.appendChild(g);
+      return { g: g, data: n };
+    });
+
+    function draw() {
+      linkEls.forEach(function (l) {
+        l.line.setAttribute('x1', l.data.source.x); l.line.setAttribute('y1', l.data.source.y);
+        l.line.setAttribute('x2', l.data.target.x); l.line.setAttribute('y2', l.data.target.y);
+        l.label.setAttribute('x', (l.data.source.x + l.data.target.x) / 2);
+        l.label.setAttribute('y', (l.data.source.y + l.data.target.y) / 2 - 4);
+      });
+      nodeEls.forEach(function (n) {
+        n.g.setAttribute('transform', 'translate(' + n.data.x + ',' + n.data.y + ')');
+      });
+    }
+    draw();
+
+    // Drag to untangle a cluster — releases the node where it's dropped;
+    // the rest of the layout stays as the physics loop above settled it.
+    nodeEls.forEach(function (n) {
+      var dragging = false, offsetX = 0, offsetY = 0;
+      function toLocal(evt) {
+        var rect = svg.getBoundingClientRect();
+        return { x: (evt.clientX - rect.left) * (width / rect.width), y: (evt.clientY - rect.top) * (height / rect.height) };
+      }
+      n.g.addEventListener('pointerdown', function (evt) {
+        dragging = true;
+        var p = toLocal(evt);
+        offsetX = n.data.x - p.x; offsetY = n.data.y - p.y;
+        n.g.setPointerCapture(evt.pointerId);
+        n.g.classList.add('dragging');
+      });
+      n.g.addEventListener('pointermove', function (evt) {
+        if (!dragging) return;
+        var p = toLocal(evt);
+        n.data.x = Math.max(24, Math.min(width - 24, p.x + offsetX));
+        n.data.y = Math.max(20, Math.min(height - 20, p.y + offsetY));
+        draw();
+      });
+      ['pointerup', 'pointercancel'].forEach(function (ev) {
+        n.g.addEventListener(ev, function () { dragging = false; n.g.classList.remove('dragging'); });
+      });
+    });
+
+    container.insertBefore(svg, container.firstChild);
+    container.classList.add('graph-enhanced');
+  }
+  enhanceEntityGraphs(document);
+
   // "Trích xuất văn bản": run it in place and swap in the refreshed tab
   // content, instead of a full page load. Without fetch, the form posts
   // normally and the redirect's #extract hash still reopens this tab.
@@ -393,7 +543,7 @@
             throw new Error(message ? message.textContent : 'Trích xuất thất bại, thử lại sau.');
           }
           var freshPane = page.getElementById(pane.id);
-          if (freshPane) pane.innerHTML = freshPane.innerHTML;
+          if (freshPane) { pane.innerHTML = freshPane.innerHTML; enhanceEntityGraphs(pane); }
           // The MongoDB JSON tab shows the same record — keep it in sync too.
           var freshJson = page.getElementById('json-source');
           var json = document.getElementById('json-source');

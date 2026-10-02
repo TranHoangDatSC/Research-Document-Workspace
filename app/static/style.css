@@ -519,6 +519,20 @@ a.source-main { cursor: pointer; }
 .graph-node { padding: 4px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
 .graph-edge { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 60px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .graph-edge::before, .graph-edge::after { content: ''; flex: 1; min-width: 12px; height: 1px; background: var(--border-strong); }
+
+/* JS enhancement: draggable 2D node-link network drawn above the row list
+   (app.js, enhanceEntityGraphs) — the list itself stays in the DOM as the
+   no-JS fallback and is only hidden once the SVG actually renders. */
+.graph-relations.graph-enhanced > .graph-relation { display: none; }
+.graph-svg { display: block; width: 100%; height: 380px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); touch-action: none; }
+.graph-link { stroke: var(--border-strong); stroke-width: 1.5; }
+.graph-link-label { fill: var(--muted); font-size: 10.5px; paint-order: stroke; stroke: var(--surface-2); stroke-width: 3px; }
+.graph-node-g { cursor: grab; }
+.graph-node-g.dragging { cursor: grabbing; }
+.graph-node-circle { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; transition: fill .15s; }
+.graph-node-g:hover .graph-node-circle, .graph-node-g:focus-visible .graph-node-circle { fill: var(--accent); }
+.graph-node-g:hover .graph-node-label, .graph-node-g:focus-visible .graph-node-label { fill: #fff; }
+.graph-node-label { fill: var(--accent); font-size: 11px; font-weight: 700; pointer-events: none; }
 .shell.ai-open .ai-panel { transform: none; }
 .shell.ai-open .ai-scrim { opacity: 1; pointer-events: auto; }
 .shell.ai-open .ai-fab { transform: scale(.4); opacity: 0; pointer-events: none; }
