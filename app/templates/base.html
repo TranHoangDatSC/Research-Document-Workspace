@@ -32,11 +32,11 @@
       </ul>
     </section>
 
-    <section class="side-section grow" aria-label="Dự án gần đây">
-      <div class="side-head">
+    <details class="side-section grow" id="sidebar-projects" aria-label="Dự án gần đây" open>
+      <summary class="side-head">
         <h2 class="side-title">Dự án gần đây</h2>
-        <a class="icon-btn" href="/#new-project" title="Tạo dự án mới" aria-label="Tạo dự án mới">{{ icon('plus', 15) }}</a>
-      </div>
+        <a class="icon-btn" href="/#new-project" title="Tạo dự án mới" aria-label="Tạo dự án mới" onclick="event.stopPropagation()">{{ icon('plus', 15) }}</a>
+      </summary>
       <nav class="tree" id="project-tree">
         {% for p in sidebar_projects %}
         <a class="tree-item{% if active_project_id and p.id|string == active_project_id|string %} active{% endif %}" href="/ui/projects/{{ p.id }}" title="{{ p.name }}">{{ icon('folder', 15) }}<span>{{ p.name }}</span></a>
@@ -45,7 +45,7 @@
         {% endfor %}
       </nav>
       <a class="side-link see-all" href="/">{{ icon('chevron-right', 13) }}<span>Xem tất cả dự án</span></a>
-    </section>
+    </details>
 
   </aside>
   <div class="scrim" id="scrim" hidden></div>

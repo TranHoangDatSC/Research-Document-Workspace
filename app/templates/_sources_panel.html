@@ -16,9 +16,13 @@
         <label class="field">Tác giả, cách nhau bởi dấu phẩy
           <input name="authors" maxlength="5000">
         </label>
-        <label class="field">Metadata bổ sung (JSON object)
-          <textarea name="custom_metadata" id="custom-metadata-input" data-kv-metadata maxlength="16000" rows="2" class="mono" spellcheck="false">{}</textarea>
-        </label>
+        <div class="field-head">
+          <span class="field-label-text">Metadata bổ sung (JSON object)</span>
+          {% include "_metadata_help.html" %}
+        </div>
+        <div class="field">
+          <textarea name="custom_metadata" id="custom-metadata-input" data-kv-metadata maxlength="16000" rows="2" class="mono" spellcheck="false" aria-label="Metadata bổ sung (JSON object)">{}</textarea>
+        </div>
       </div>
     </details>
   </form>

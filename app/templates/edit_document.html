@@ -2,6 +2,7 @@
 {% block title %}Sửa tài liệu · {{ app_name }}{% endblock %}
 {% block crumbs %}<a href="/ui/projects/{{ project.id }}">{{ project.name }}</a>{{ icon('chevron-right', 14) }}<a href="/ui/documents/{{ document.id }}">{{ document.original_name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">Sửa</span>{% endblock %}
 {% block content %}
+{% set kind = document|file_kind %}
 <section class="card narrow" id="edit-document-card">
   <div class="card-head"><h2>Sửa metadata</h2><span class="muted small-text">{{ document.original_name }}</span></div>
   <form method="post" action="/ui/documents/{{ document.id }}/edit" class="stack" data-draft-key="edit-document:{{ document.id }}">
@@ -11,9 +12,13 @@
     <label class="field">Tác giả, cách nhau bởi dấu phẩy
       <input name="authors" maxlength="5000" value="{{ document.authors|join(',') }}">
     </label>
-    <label class="field">Metadata bổ sung (JSON object)
-      <textarea name="custom_metadata" data-kv-metadata maxlength="16000" rows="4" class="mono" spellcheck="false">{{ document.custom_metadata|pretty_json }}</textarea>
-    </label>
+    <div class="field-head">
+      <span class="field-label-text">Metadata bổ sung (JSON object)</span>
+      {% with metadata_help_kind=kind.name, metadata_help_label=kind.label %}{% include "_metadata_help.html" %}{% endwith %}
+    </div>
+    <div class="field">
+      <textarea name="custom_metadata" data-kv-metadata maxlength="16000" rows="4" class="mono" spellcheck="false" aria-label="Metadata bổ sung (JSON object)">{{ document.custom_metadata|pretty_json }}</textarea>
+    </div>
     <div class="actions">
       <button class="btn primary">{{ icon('check', 16) }}Lưu thay đổi</button>
       <a class="btn secondary" href="/ui/documents/{{ document.id }}">Hủy</a>

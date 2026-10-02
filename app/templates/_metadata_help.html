@@ -1,0 +1,21 @@
+{% set _kind_help = {
+  'document': 'năm xuất bản, nguồn (hội nghị/tạp chí/nội bộ), mã DOI, từ khóa nghiên cứu, ngôn ngữ, đơn vị/nhà xuất bản',
+  'presentation': 'sự kiện hoặc buổi trình bày, người trình bày, ngày diễn ra, đối tượng khán giả',
+  'data': 'kỳ báo cáo hoặc khoảng thời gian dữ liệu, đơn vị tính, nguồn thu thập, phương pháp xử lý',
+  'image': 'địa điểm chụp, thời điểm chụp, người/vật thể trong ảnh, thiết bị chụp',
+  'audio': 'người nói hoặc nguồn âm thanh, thời lượng, ngữ cảnh ghi âm',
+  'video': 'người xuất hiện, địa điểm quay, thời lượng, mục đích video',
+  'archive': 'mô tả ngắn các tệp bên trong, nguồn gốc tệp nén',
+} %}
+<details class="kv-info">
+  <summary class="icon-btn" title="Hướng dẫn nhập metadata" aria-label="Hướng dẫn nhập metadata">{{ icon('info', 13) }}</summary>
+  <div class="kv-info-popover">
+    <p><strong>Metadata bổ sung</strong> là các trường tự do (dạng key–value) giúp AI và tìm kiếm chính xác hơn.</p>
+    {% if metadata_help_kind and _kind_help.get(metadata_help_kind) %}
+    <p class="muted small-text">Gợi ý cho {{ metadata_help_label or 'loại tệp này' }}: {{ _kind_help[metadata_help_kind] }}.</p>
+    {% else %}
+    <p class="muted small-text">Gợi ý phổ biến: năm, nguồn, từ khóa, ngôn ngữ. Có thể bổ sung chi tiết hơn (theo đúng loại tệp) sau khi tải lên, ở trang chỉnh sửa tài liệu.</p>
+    {% endif %}
+    <p class="muted small-text">Gõ vào ô "Tên trường" để xem gợi ý có sẵn, hoặc bấm "Nhóm" để tạo trường con lồng nhau.</p>
+  </div>
+</details>
