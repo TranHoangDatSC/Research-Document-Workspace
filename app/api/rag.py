@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from app import ratelimit
 from app.services import documents as documents_service
 from app.services import rag as service
 
@@ -24,9 +25,11 @@ def _user_id(request):
 
 @router.post("/projects/{project_id}/ask")
 def ask_project(project_id: UUID, payload: AskRequest, request: Request):
+    user_id = _user_id(request)
+    ratelimit.check("ask", request, user_id=user_id)
     return service.ask_project(
         project_id, payload.question, payload.model, payload.document_ids,
-        user_id=_user_id(request), chat_id=payload.chat_id,
+        user_id=user_id, chat_id=payload.chat_id,
     )
 
 

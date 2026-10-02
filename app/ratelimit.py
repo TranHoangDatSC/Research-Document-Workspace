@@ -18,6 +18,11 @@ LIMITS = {
     "forgot-password": (5, 15 * 60),
     "reset-password": (10, 15 * 60),
     "verify-resend": (5, 15 * 60),
+    # Every ask costs an LLM call (quota/money, up to LLM_TIMEOUT_SECONDS per
+    # model x key attempted) and, once that provider is exhausted, one log
+    # line per failed attempt — unlike the forms above, nothing else stood
+    # between this endpoint and someone looping it.
+    "ask": (20, 5 * 60),
 }
 
 _hits = defaultdict(deque)
@@ -34,10 +39,15 @@ def client_ip(request):
     return request.client.host if request.client else "unknown"
 
 
-def check(bucket, request):
-    """Counts this attempt; 429 once the bucket's limit is reached."""
+def check(bucket, request, user_id=None):
+    """Counts this attempt; 429 once the bucket's limit is reached.
+
+    `user_id` buckets by account instead of IP — for an authenticated
+    endpoint, so one person behind a shared/NAT IP can't be throttled by
+    someone else's traffic, and switching IP doesn't reset their own count.
+    """
     limit, window = LIMITS[bucket]
-    key = (bucket, client_ip(request))
+    key = (bucket, user_id if user_id is not None else client_ip(request))
     now = time.monotonic()
     with _lock:
         hits = _hits[key]
