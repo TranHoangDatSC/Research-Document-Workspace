@@ -104,6 +104,43 @@
     {% endif %}
     {% endif %}
   </section>
+
+  {% if document.extracted_text and document.extracted_text.text %}
+  <section class="card">
+    <div class="card-head">
+      <h2>{{ icon('sparkles', 15) }}Đồ thị thực thể (AI)</h2>
+      <form method="post" action="/ui/documents/{{ document.id }}/graph" data-inline-extract data-busy-label="Đang tạo đồ thị…">
+        <button type="submit" class="btn ghost sm">{{ icon('refresh' if document.entity_graph else 'sparkles', 14) }}<span>{{ 'Tạo lại' if document.entity_graph else 'Tạo đồ thị thực thể' }}</span></button>
+      </form>
+    </div>
+    <p class="notice extract-error" hidden></p>
+    <p class="muted small-text">Giúp AI trả lời tốt hơn câu hỏi liên hệ nhiều tài liệu (vd: "ai hướng dẫn đề tài X?"). Tốn 1 lượt gọi AI mỗi lần tạo.</p>
+    {% if document.entity_graph %}
+    <div class="graph-section">
+      <h3 class="side-title">{{ icon('tag', 13) }}Thực thể ({{ document.entity_graph.entities|length }})</h3>
+      <div class="graph-entities-chips">
+        {% for e in document.entity_graph.entities %}<span class="chip">{{ e }}</span>{% else %}<span class="muted small-text">Không có</span>{% endfor %}
+      </div>
+    </div>
+    <div class="graph-section">
+      <h3 class="side-title">{{ icon('layers', 13) }}Liên kết giữa các thực thể ({{ document.entity_graph.relations|length }})</h3>
+      <div class="graph-relations">
+        {% for r in document.entity_graph.relations %}
+        <div class="graph-relation">
+          <span class="graph-node">{{ r.subject }}</span>
+          <span class="graph-edge">{{ r.relation }}</span>
+          <span class="graph-node">{{ r.object }}</span>
+        </div>
+        {% else %}
+        <p class="muted small-text">Không phát hiện liên kết nào — tài liệu này có thể chỉ nhắc đến các thực thể riêng lẻ, không mô tả quan hệ giữa chúng.</p>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <p class="muted">Chưa tạo đồ thị thực thể cho tài liệu này.</p>
+    {% endif %}
+  </section>
+  {% endif %}
 </div>
 
 <div id="pane-json" role="tabpanel" aria-labelledby="tab-json" class="pane">

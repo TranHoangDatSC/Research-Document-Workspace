@@ -176,6 +176,76 @@ class ExpandByGraphTests(unittest.TestCase):
         self.assertEqual(len(expanded), 2)  # base + exactly 1, even though 2 qualify
 
 
+class ExpandByEntityGraphTests(unittest.TestCase):
+    """app.rag.expand_by_entity_graph: the real entity/relation graph hop
+    (app/graph.py extracts it; this walks it). Two things it can do that
+    expand_by_shared_terms can't: anchor on the question itself (not just
+    the chunks BM25 already picked), and cross a relation between two
+    entities that never appear in the same chunk, let alone share a term."""
+
+    def test_pulls_in_chunk_matching_the_question_even_without_bm25_overlap(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "Some unrelated passage about weather."},
+            {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "Le Mong Tien is a student in the CS department."},
+        ]
+        selected = [chunks[0]]  # BM25 matched something else entirely
+        expanded = rag.expand_by_entity_graph("Who is Le Mong Tien?", selected, chunks, entities=["Le Mong Tien"], relations=[])
+        self.assertEqual(expanded, [chunks[0], chunks[1]])
+
+    def test_crosses_a_relation_between_two_entities(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "Advisor Khiet reviews many student projects."},
+            {"document_id": "2", "original_name": "b", "chunk_index": 0, "text": "Tien is enrolled in the information technology program."},
+        ]
+        selected = [chunks[0]]  # the question/BM25 only reached the "Khiet" chunk
+        relations = [{"subject": "Tien", "relation": "hướng dẫn bởi", "object": "Khiet"}]
+        expanded = rag.expand_by_entity_graph("advisor?", selected, chunks, entities=["Tien", "Khiet"], relations=relations)
+        self.assertEqual(expanded, [chunks[0], chunks[1]])
+
+    def test_no_entities_returns_selected_unchanged(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "first"},
+            {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "second"},
+        ]
+        selected = [chunks[0]]
+        self.assertEqual(rag.expand_by_entity_graph("q", selected, chunks, entities=[], relations=[]), selected)
+
+    def test_no_matching_entity_returns_selected_unchanged(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "nothing special"},
+            {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "also nothing"},
+        ]
+        selected = [chunks[0]]
+        self.assertEqual(rag.expand_by_entity_graph("q", selected, chunks, entities=["Zephyr"], relations=[]), selected)
+
+    def test_never_duplicates_an_already_selected_chunk(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "Project Orion overview."},
+            {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "Project Orion budget."},
+            {"document_id": "1", "original_name": "a", "chunk_index": 2, "text": "Completely unrelated passage."},
+        ]
+        selected = [chunks[0], chunks[1]]
+        expanded = rag.expand_by_entity_graph("orion?", selected, chunks, entities=["Orion"], relations=[])
+        self.assertEqual(expanded, selected)
+
+    def test_respects_max_extra_cap(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": i, "text": "Zephyr appears here."}
+            for i in range(4)
+        ]
+        selected = [chunks[0]]
+        expanded = rag.expand_by_entity_graph("zephyr?", selected, chunks, entities=["Zephyr"], relations=[], max_extra=1)
+        self.assertEqual(len(expanded), 2)  # selected + exactly 1, even though 3 qualify
+
+    def test_disabled_when_max_extra_is_zero(self):
+        chunks = [
+            {"document_id": "1", "original_name": "a", "chunk_index": 0, "text": "Zephyr here."},
+            {"document_id": "1", "original_name": "a", "chunk_index": 1, "text": "Zephyr there too."},
+        ]
+        selected = [chunks[0]]
+        self.assertEqual(rag.expand_by_entity_graph("zephyr?", selected, chunks, entities=["Zephyr"], relations=[], max_extra=0), selected)
+
+
 class OrderForReadingTests(unittest.TestCase):
     def test_groups_by_document_then_chunk_order(self):
         chunks = [

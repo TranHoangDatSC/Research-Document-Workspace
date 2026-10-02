@@ -9,11 +9,18 @@ by app/services/rag.py:
 - BM25: otherwise, chunks are ranked with Okapi BM25 over diacritic-folded
   tokens (Vietnamese stopwords removed) plus adjacent-syllable bigrams, since
   Vietnamese words are mostly two syllables ("học sinh", "chính trị") and a
-  bag of single syllables loses that. `expand_by_shared_terms` then adds a
-  graph-lite hop on top: chunks connected to a BM25 hit through a shared rare
-  term (a name, a project title) get pulled in too, even without matching the
-  question's own words — see its docstring for the no-infrastructure design
-  and where a real entity/relation graph would plug in later.
+  bag of single syllables loses that. One graph-shaped hop is then added on
+  top of the BM25 hits, pulling in chunks connected to them even without
+  matching the question's own words:
+    - `expand_by_entity_graph`, when at least one selected document has an
+      entity/relation graph (app/graph.py: one LLM call per document, made at
+      extraction time, see services/documents.py) — walks real named
+      entities and relations.
+    - `expand_by_shared_terms` otherwise (documents extracted before the
+      graph existed, or whose extraction failed) — the same one-hop walk
+      over a rare shared BM25 term (a name, a project title) instead, so
+      retrieval never regresses to plain BM25 just because the graph step
+      didn't run.
 
 Chunks are numbered [1]..[n] in the prompt; the model cites those numbers and
 `cited_chunks` maps them back, so the sources shown are the ones actually used.
@@ -194,10 +201,10 @@ def expand_by_shared_terms(selected, chunks, max_extra=2):
     misses ("tài liệu nào liên quan đến đề tài do X hướng dẫn?" when the
     connecting chunk never mentions X, only the shared project name does).
 
-    A real entity/relation graph (extracted once per document — e.g. one LLM
-    call at extraction time, stored in MongoDB) would replace the "rare term"
-    signal below with actual named entities and typed relations; this
-    function is where that would plug in, the one-hop walk stays the same.
+    Superseded per-project by expand_by_entity_graph below whenever at least
+    one of a project's documents actually has an extracted entity graph —
+    see services.rag._select_chunks. This one stays as the fallback for
+    documents extracted before the graph existed, or when extraction failed.
     """
     if not selected or max_extra <= 0 or len(selected) >= len(chunks):
         return selected
@@ -225,6 +232,74 @@ def expand_by_shared_terms(selected, chunks, max_extra=2):
         return selected
     candidates.sort(key=lambda pair: pair[0], reverse=True)
     return selected + [chunk for _, chunk in candidates[:max_extra]]
+
+
+def expand_by_entity_graph(question, selected, chunks, entities, relations, max_extra=2):
+    """Real graph-RAG hop, using the entity/relation graph extracted once per
+    document by the LLM (app/graph.py) instead of expand_by_shared_terms'
+    rare-BM25-term guess. Two things it can do that term-sharing can't:
+
+    - Anchor on the QUESTION itself, not just the chunks BM25 already picked.
+      A question can name an entity ("ai hướng dẫn Lê Mộng Tiên?") that never
+      appears verbatim in any single high-scoring chunk, so BM25 alone may
+      not surface the chunk that answers it; a direct entity mention does.
+    - Cross a *relation*, not just a shared mention. Chunk A says "Lê Mộng
+      Tiên — hướng dẫn: ThS. Khiết"; chunk B, in a different document, talks
+      only about "ThS. Khiết" and never repeats Tiên's name or any other
+      word from A. expand_by_shared_terms finds nothing in common between
+      them; a stored relation (Tiên, "hướng dẫn bởi", Khiết) links them
+      directly.
+
+    `entities`/`relations` are the project's documents' graphs, already
+    merged and deduplicated by the caller (services.rag.ask_project) — this
+    function doesn't care which document an entity came from.
+    """
+    if max_extra <= 0 or len(selected) >= len(chunks) or not entities:
+        return selected
+
+    folded_names = {name: _fold(name) for name in entities if name and name.strip()}
+    if not folded_names:
+        return selected
+
+    # Which chunks mention which entity (case/diacritic-insensitive substring).
+    folded_chunk_text = {_chunk_key(c): _fold(c["text"]) for c in chunks}
+    mentions = {}
+    for name, needle in folded_names.items():
+        hits = {key for key, text in folded_chunk_text.items() if needle in text}
+        if hits:
+            mentions[name] = hits
+
+    # A relation "activates" both ends together: a question or chunk about
+    # one side makes the other side's chunks relevant too, even with zero
+    # shared vocabulary between them.
+    linked = {name: set() for name in folded_names}
+    for rel in relations or ():
+        subject, obj = (rel or {}).get("subject"), (rel or {}).get("object")
+        if subject in folded_names and obj in folded_names:
+            linked[subject].add(obj)
+            linked[obj].add(subject)
+
+    folded_question = _fold(question)
+    active = {name for name, needle in folded_names.items() if needle in folded_question}
+    for chunk in selected:
+        text = folded_chunk_text.get(_chunk_key(chunk), "")
+        active |= {name for name, needle in folded_names.items() if needle in text}
+    active |= {linked_name for name in list(active) for linked_name in linked.get(name, ())}
+    if not active:
+        return selected
+
+    selected_keys = {_chunk_key(c) for c in selected}
+    scores = Counter()
+    for name in active:
+        for key in mentions.get(name, ()):
+            if key not in selected_keys:
+                scores[key] += 1
+    if not scores:
+        return selected
+
+    by_key = {_chunk_key(c): c for c in chunks}
+    ranked_keys = sorted(scores, key=lambda key: scores[key], reverse=True)
+    return selected + [by_key[key] for key in ranked_keys[:max_extra]]
 
 
 def order_for_reading(chunks):
