@@ -10,6 +10,7 @@ import urllib.error
 from unittest.mock import patch
 
 from app import llm
+from app.repositories import usage as usage_repository
 
 GEMINI_OK = {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
 
@@ -54,6 +55,12 @@ class LLMTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
         for key in ("LLM_API_KEYS", "LLM_MODEL", "LLM_MODELS", "LLM_THINKING_BUDGET"):
             os.environ.pop(key, None)
+        # This file deliberately has no FakeBackend (it tests the HTTP client
+        # in isolation) — stub out usage logging rather than let it silently
+        # depend on, or fail against, a real MongoDB.
+        record_patcher = patch.object(usage_repository, "record")
+        record_patcher.start()
+        self.addCleanup(record_patcher.stop)
 
     def ask(self, server, *args, **kwargs):
         with patch("urllib.request.urlopen", side_effect=server):
@@ -94,6 +101,22 @@ class RequestPayloadTests(LLMTestCase):
             [(c["role"], c["parts"][0]["text"]) for c in server.payloads[0]["contents"]],
             [("user", "old q"), ("model", "old a"), ("user", "new question")],
         )
+
+    def test_openai_default_base_url(self):
+        os.environ["LLM_PROVIDER"] = "openai"
+        server = FakeLLMServer(lambda r: {"choices": [{"message": {"content": "ok"}}]})
+        self.ask(server, "q")
+        self.assertEqual(server.requests[0].full_url, "https://api.openai.com/v1/chat/completions")
+
+    def test_openai_base_url_override_reaches_a_local_model_server(self):
+        # Ollama and other local runners speak the same protocol at their own
+        # address — pointing LLM_BASE_URL there is the whole integration.
+        os.environ["LLM_PROVIDER"] = "openai"
+        os.environ["LLM_BASE_URL"] = "http://localhost:11434/v1/"
+        self.addCleanup(lambda: os.environ.pop("LLM_BASE_URL", None))
+        server = FakeLLMServer(lambda r: {"choices": [{"message": {"content": "ok"}}]})
+        self.ask(server, "q")
+        self.assertEqual(server.requests[0].full_url, "http://localhost:11434/v1/chat/completions")
 
     def test_openai_uses_system_and_assistant_roles(self):
         os.environ["LLM_PROVIDER"] = "openai"

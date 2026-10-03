@@ -24,6 +24,8 @@ import time
 import urllib.error
 import urllib.request
 
+from app.repositories import usage as usage_repository
+
 log = logging.getLogger("uvicorn.error")
 
 DEFAULT_MODELS = {
@@ -103,6 +105,16 @@ def _call_gemini(api_key, model, prompt, system=None, temperature=None, history=
     }
 
 
+def _openai_base_url():
+    """https://api.openai.com/v1 unless overridden — any server speaking the
+    same chat-completions protocol works here, which covers more than OpenAI
+    itself: Ollama, LM Studio, vLLM and most local-model runners all expose
+    an OpenAI-compatible endpoint, so pointing LLM_BASE_URL at one (e.g.
+    http://localhost:11434/v1 for Ollama) is enough to use it — no code
+    change, just LLM_PROVIDER=openai + this setting in .env or /admin/settings."""
+    return os.environ.get("LLM_BASE_URL", "").strip().rstrip("/") or "https://api.openai.com/v1"
+
+
 def _call_openai(api_key, model, prompt, system=None, temperature=None, history=()):
     messages = [{"role": "system", "content": system}] if system else []
     messages.extend(
@@ -113,7 +125,7 @@ def _call_openai(api_key, model, prompt, system=None, temperature=None, history=
     if temperature is not None:
         payload["temperature"] = temperature
     data = _post_json(
-        "https://api.openai.com/v1/chat/completions", payload,
+        f"{_openai_base_url()}/chat/completions", payload,
         {"Authorization": f"Bearer {api_key}"},
     )
     try:
@@ -179,32 +191,50 @@ def _normalize_history(history):
     return turns
 
 
-def _attempt(call, key, model, prompt, system, temperature, history):
+def _record_usage(source, provider, model, started, ok, usage=None, error=None):
+    """Best-effort, like every other storage write in this app: a down
+    MongoDB must never fail the actual question, it only means this one
+    attempt is missing from the admin stats page (app/services/usage_stats.py)."""
+    try:
+        usage_repository.record(source, provider, model, ok, (time.monotonic() - started) * 1000, usage=usage, error=error)
+    except Exception as exc:
+        log.warning("llm_usage_record_failed error=%s", type(exc).__name__)
+
+
+def _attempt(call, key, model, prompt, system, temperature, history, source, provider):
     """Runs one (key, model) combination; never raises — errors come back as data."""
     started = time.monotonic()
     try:
         text, usage = call(key, model, prompt, system=system, temperature=temperature, history=history)
     except LLMError as exc:
+        _record_usage(source, provider, model, started, False, error=exc.message)
         return None, f"model={model}: {exc.message}"
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:200]
+        _record_usage(source, provider, model, started, False, error=f"HTTP {exc.code}: {detail}")
         return None, f"model={model} HTTP {exc.code}: {detail}"
     except urllib.error.URLError as exc:
+        _record_usage(source, provider, model, started, False, error=f"URLError: {exc.reason}")
         return None, f"model={model}: không kết nối được ({exc.reason})"
     except TimeoutError:
+        _record_usage(source, provider, model, started, False, error="timeout")
         return None, f"model={model}: quá {_timeout():.0f}s không phản hồi"
     log.info(
         "llm_usage model=%s ms=%d input_tokens=%s output_tokens=%s thinking_tokens=%s cached_tokens=%s",
         model, (time.monotonic() - started) * 1000,
         usage.get("input"), usage.get("output"), usage.get("thinking"), usage.get("cached"),
     )
+    _record_usage(source, provider, model, started, True, usage=usage)
     return text, None
 
 
-def ask(prompt, preferred_model=None, system=None, temperature=None, history=None):
+def ask(prompt, preferred_model=None, system=None, temperature=None, history=None, source="ask"):
     """Returns (answer_text, model_used). Keys outer, models inner, one at a
     time; `preferred_model` (the person's pick in the UI) goes first.
-    `history`: earlier turns as [(role, text)], role "user" or "model"."""
+    `history`: earlier turns as [(role, text)], role "user" or "model".
+    `source`: a short label ("ask", "graph", ...) recorded with every
+    attempt's usage (app/repositories/usage.py) — which feature spent the
+    tokens, for the admin stats page's per-source breakdown."""
     history = _normalize_history(history)
     provider = current_provider()
     keys = _api_keys()
@@ -228,7 +258,7 @@ def ask(prompt, preferred_model=None, system=None, temperature=None, history=Non
     for key in keys:
         for model in models:
             attempts += 1
-            answer, error = _attempt(call, key, model, prompt, system, temperature, history)
+            answer, error = _attempt(call, key, model, prompt, system, temperature, history, source, provider)
             if answer is not None:
                 return answer, model
             last_error = error

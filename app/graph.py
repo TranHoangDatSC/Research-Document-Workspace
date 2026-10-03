@@ -95,7 +95,7 @@ def extract_graph(text):
     if not text:
         return None
     try:
-        answer, _ = llm.ask(_PROMPT.format(text=text[:MAX_INPUT_CHARACTERS]), temperature=TEMPERATURE)
+        answer, _ = llm.ask(_PROMPT.format(text=text[:MAX_INPUT_CHARACTERS]), temperature=TEMPERATURE, source="graph")
     except llm.LLMError as exc:
         log.info("graph_extraction_llm_failed error=%s", exc.message)
         return None

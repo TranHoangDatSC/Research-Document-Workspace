@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 
 from app import llm
+from app.repositories import usage as usage_repository
 
 log = logging.getLogger("uvicorn.error")
 
@@ -132,6 +133,16 @@ def _delete(key, file):
         log.info("media_ai_cleanup_failed file=%s", file.get("name"))  # expires on its own in 48 h
 
 
+def _record_usage(model, ok, started, usage=None, error=None):
+    """Best-effort, same as llm.py's own _record_usage: a down MongoDB must
+    never fail the analysis itself, only leave this attempt off the admin
+    stats page (app/services/usage_stats.py)."""
+    try:
+        usage_repository.record("media_ai", "gemini", model, ok, (time.monotonic() - started) * 1000, usage=usage, error=error)
+    except Exception as exc:
+        log.warning("media_ai_usage_record_failed error=%s", type(exc).__name__)
+
+
 def _generate(key, model, file, kind):
     payload = {
         "contents": [{"role": "user", "parts": [
@@ -153,7 +164,12 @@ def _generate(key, model, file, kind):
         raise MediaAIError("Gemini trả về phản hồi không đúng định dạng") from None
     if not text.strip():
         raise MediaAIError(f"Gemini không trả về nội dung (finishReason={candidate.get('finishReason', '?')})", status=422)
-    return text
+    usage_data = data.get("usageMetadata") or {}
+    usage = {
+        "input": usage_data.get("promptTokenCount"), "output": usage_data.get("candidatesTokenCount"),
+        "thinking": usage_data.get("thoughtsTokenCount"), "cached": usage_data.get("cachedContentTokenCount"),
+    }
+    return text, usage
 
 
 def analyze(kind, open_stream, size, mime, display_name):
@@ -186,13 +202,16 @@ def analyze(kind, open_stream, size, mime, display_name):
                     close()
             file = _wait_until_active(key, file)
             for model in models:
+                started = time.monotonic()
                 try:
-                    started = time.monotonic()
-                    text = _generate(key, model, file, kind)
+                    text, usage = _generate(key, model, file, kind)
                     log.info("media_ai_done kind=%s model=%s size_bytes=%s ms=%d", kind, model, size, (time.monotonic() - started) * 1000)
+                    _record_usage(model, True, started, usage=usage)
                     return text, model
                 except urllib.error.HTTPError as exc:
-                    last_error = f"model={model} HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:200]}"
+                    detail = exc.read().decode("utf-8", "replace")[:200]
+                    last_error = f"model={model} HTTP {exc.code}: {detail}"
+                    _record_usage(model, False, started, error=f"HTTP {exc.code}: {detail}")
                     if exc.code == 429:
                         break  # this key is out of quota: next key
                     if exc.code == 400:

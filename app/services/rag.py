@@ -222,7 +222,7 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
         answer, model_used = llm.ask(
             prompt, preferred_model=model or None,
             system=_system_instruction(domain), temperature=domain.temperature,
-            history=_history_turns(history),
+            history=_history_turns(history), source="ask",
         )
     except llm.LLMError as exc:
         log.warning("rag_llm_failed error=%s", exc.message)
