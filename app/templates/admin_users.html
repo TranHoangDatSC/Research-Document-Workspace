@@ -8,10 +8,15 @@
   <p class="muted lead">Hai vai trò: Người dùng và Quản trị viên.</p>
 </div>
 
+<div class="admin-toolbar">
+  {% set active_admin_tab = 'users' %}
+  {% include "_admin_nav.html" %}
+</div>
+
 <section class="stat-row" aria-label="Thống kê tài khoản">
-  <div class="stat-card"><span class="stat-icon">{{ icon('user', 18) }}</span><div><strong>{{ users|length }}</strong><small>tổng số tài khoản</small></div></div>
-  <div class="stat-card"><span class="stat-icon">{{ icon('check', 18) }}</span><div><strong>{{ users|selectattr('is_active')|list|length }}</strong><small>đang hoạt động</small></div></div>
-  <div class="stat-card"><span class="stat-icon">{{ icon('layers', 18) }}</span><div><strong>{{ users|selectattr('role', 'equalto', 'admin')|list|length }}</strong><small>quản trị viên</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('user', 18) }}</span><div><strong>{{ user_stats.total }}</strong><small>tổng số tài khoản</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('check', 18) }}</span><div><strong>{{ user_stats.active }}</strong><small>đang hoạt động</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('layers', 18) }}</span><div><strong>{{ user_stats.admins }}</strong><small>quản trị viên</small></div></div>
 </section>
 
 <section class="card signup-setting" aria-label="Đăng ký công khai">
@@ -36,15 +41,19 @@
 <div class="split">
   <section class="card">
     <div class="card-head">
-      <h2>Tài khoản ({{ users|length }})</h2>
-      <label class="search inline"><span class="sr-only">Lọc tài khoản</span>{{ icon('search', 14) }}<input type="search" id="user-filter" placeholder="Lọc theo tên đăng nhập…" autocomplete="off"></label>
+      <h2>Tài khoản ({{ total_users }})</h2>
+      <form method="get" action="/admin/users" class="search inline">
+        <span class="sr-only">Tìm tài khoản</span>{{ icon('search', 14) }}
+        <input type="search" name="q" value="{{ search_query }}" placeholder="Tìm theo tên đăng nhập…" maxlength="200" autocomplete="off">
+        {% if search_query %}<a class="btn ghost sm" href="/admin/users">{{ icon('x', 13) }}</a>{% endif %}
+      </form>
     </div>
     <div class="table-wrap">
       <table class="doc-table" id="user-table">
         <thead><tr><th>Tài khoản</th><th>Vai trò</th><th>Trạng thái</th><th>Tạo lúc</th><th class="right">Thao tác</th></tr></thead>
         <tbody>
           {% for u in users %}
-          <tr data-username="{{ u.username|lower }}">
+          <tr>
             <td>
               <div class="user-cell">
                 <span class="user-avatar-sm {{ 'admin' if u.role == 'admin' }}">{{ u.username[:1]|upper }}</span>
@@ -78,10 +87,13 @@
               {% endif %}
             </td>
           </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">Không có tài khoản nào khớp "{{ search_query }}".</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+    {% include "_pager.html" %}
   </section>
 
   <section class="card">

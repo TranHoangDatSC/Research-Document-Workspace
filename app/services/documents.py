@@ -192,19 +192,32 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
     return {**row, **details}
 
 
+def _kind_extensions(kind):
+    if not kind:
+        return None
+    if kind not in file_types.KINDS:
+        raise HTTPException(422, "Unknown kind; use one of: " + ", ".join(file_types.KINDS))
+    return [ext for ext, (_, k) in file_types.EXTENSIONS.items() if k == kind]
+
+
 def list_documents(project_id, limit=20, offset=0, query=None, kind=None):
     """`query` matches the file name; `kind` is a file_types kind name
     ("image", "video", ...) — unknown kinds are 422, not silently ignored."""
     require_project(project_id)
-    extensions = None
-    if kind:
-        if kind not in file_types.KINDS:
-            raise HTTPException(422, "Unknown kind; use one of: " + ", ".join(file_types.KINDS))
-        extensions = [ext for ext, (_, k) in file_types.EXTENSIONS.items() if k == kind]
+    extensions = _kind_extensions(kind)
     try:
         return repository.list_documents(project_id, limit, offset, (query or "").strip() or None, extensions)
     except psycopg.Error as exc:
         raise storage_error("list-documents", exc) from None
+
+
+def count_documents(project_id, query=None, kind=None):
+    require_project(project_id)
+    extensions = _kind_extensions(kind)
+    try:
+        return repository.count_documents(project_id, (query or "").strip() or None, extensions)
+    except psycopg.Error as exc:
+        raise storage_error("count-documents", exc) from None
 
 
 def ai_ready_count(project_id):

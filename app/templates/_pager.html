@@ -1,0 +1,14 @@
+{% if pager_total_pages %}
+<nav class="pager numbered" aria-label="{{ pager_label }}">
+  {% if pager_prev_href %}<a class="pager-btn" href="{{ pager_prev_href }}" aria-label="Trang trước"{% if pager_ajax %} data-source-page{% endif %}>{{ icon('arrow-left', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('arrow-left', 14) }}</span>{% endif %}
+  <span class="pager-pages">
+    {% for item in pager_items %}
+    {% if item.ellipsis %}<span class="pager-ellipsis">…</span>
+    {% elif item.current %}<span class="pager-num current" aria-current="page">{{ item.label }}</span>
+    {% else %}<a class="pager-num" href="{{ item.href }}"{% if pager_ajax %} data-source-page{% endif %}>{{ item.label }}</a>
+    {% endif %}
+    {% endfor %}
+  </span>
+  {% if pager_next_href %}<a class="pager-btn" href="{{ pager_next_href }}" aria-label="Trang sau"{% if pager_ajax %} data-source-page{% endif %}>{{ icon('chevron-right', 14) }}</a>{% else %}<span class="pager-btn disabled" aria-hidden="true">{{ icon('chevron-right', 14) }}</span>{% endif %}
+</nav>
+{% endif %}

@@ -60,9 +60,7 @@ def _escape_like(text):
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def list_documents(project_id, limit, offset, query=None, extensions=None):
-    """`query`: case-insensitive substring of the file name (wildcards in it are
-    literal). `extensions`: only files ending in one of these, e.g. [".png", ".jpg"]."""
+def _document_filters(project_id, query, extensions):
     where, params = ["project_id = %s"], [project_id]
     if query:
         where.append("original_name ILIKE %s ESCAPE '\\'")
@@ -70,6 +68,13 @@ def list_documents(project_id, limit, offset, query=None, extensions=None):
     if extensions:
         where.append("object_name LIKE ANY(%s)")
         params.append([f"%{ext}" for ext in extensions])
+    return where, params
+
+
+def list_documents(project_id, limit, offset, query=None, extensions=None):
+    """`query`: case-insensitive substring of the file name (wildcards in it are
+    literal). `extensions`: only files ending in one of these, e.g. [".png", ".jpg"]."""
+    where, params = _document_filters(project_id, query, extensions)
     with postgres_connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
@@ -78,6 +83,13 @@ def list_documents(project_id, limit, offset, query=None, extensions=None):
                 (*params, limit, offset),
             )
             return cursor.fetchall()
+
+
+def count_documents(project_id, query=None, extensions=None):
+    """Same filters as list_documents, for the sources sidebar's pager."""
+    where, params = _document_filters(project_id, query, extensions)
+    with postgres_connection() as connection:
+        return connection.execute(f"SELECT count(*) FROM documents WHERE {' AND '.join(where)}", params).fetchone()[0]
 
 
 def extension_totals(project_id):

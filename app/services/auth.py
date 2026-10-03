@@ -24,6 +24,7 @@ MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 200
 RESET_TOKEN_MINUTES = 60
 VERIFY_TOKEN_HOURS = 48
+KEY_ACCESS_TOKEN_MINUTES = 15
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SIGNUP_SETTING = "signup_open"
 
@@ -298,6 +299,57 @@ def request_password_reset(email, base_url):
     log.info("password_reset_requested matched=true user_id=%s", user["id"])
 
 
+def request_key_access(user_id, base_url):
+    """Emails a one-time confirmation link to the account's OWN address
+    before /admin/keys unlocks — see app/auth.py's key-access cookie. Unlike
+    the public reset-password flow this isn't trying to hide whether an
+    account exists (the caller is already a signed-in admin), so failures
+    are surfaced for real instead of staying silent."""
+    try:
+        user = repository.get_by_id(user_id)
+    except psycopg.Error as exc:
+        raise _unavailable("key-access-request", exc) from None
+    if user is None:
+        raise HTTPException(404, "Không tìm thấy tài khoản")
+    if not user.get("email") or not user["email_verified"]:
+        raise HTTPException(409, "Tài khoản cần có email đã xác minh để dùng tính năng này")
+    if base_url is None:
+        raise HTTPException(503, "Thiếu APP_BASE_URL trong .env, không gửi được email xác thực")
+    try:
+        token = _new_token(user["id"], "key_access", timedelta(minutes=KEY_ACCESS_TOKEN_MINUTES))
+    except psycopg.Error as exc:
+        raise _unavailable("key-access-token", exc) from None
+    link = f"{base_url.rstrip('/')}/admin/keys/confirm?token={token}"
+    body = (
+        f"Xin chào {user['username']},\n\n"
+        f"Có yêu cầu xem/quản lý API key kỹ thuật của {APP_NAME}.\n"
+        f"Mở liên kết sau để xác nhận (hiệu lực {KEY_ACCESS_TOKEN_MINUTES} phút, dùng được một lần):\n\n"
+        f"{link}\n\n"
+        "Nếu không phải bạn yêu cầu, hãy đổi mật khẩu ngay và kiểm tra lại tài khoản.\n"
+    )
+    try:
+        mailer.send(user["email"], f"Xác thực quản lý API key — {APP_NAME}", body)
+    except mailer.MailError as exc:
+        log.error("key_access_mail_failed user_id=%s error=%s", user["id"], exc)
+        raise HTTPException(503, "Gửi email xác thực thất bại; kiểm tra log máy chủ") from None
+    log.info("key_access_requested user_id=%s", user["id"])
+
+
+def confirm_key_access(token):
+    """The user_id a valid key-access link belonged to — the caller sets
+    app/auth.py's cookie for it. Raises on an invalid/used/expired link."""
+    if not token:
+        raise HTTPException(400, "Liên kết không hợp lệ")
+    try:
+        user_id = repository.claim_key_access(_token_hash(token))
+    except psycopg.Error as exc:
+        raise _unavailable("key-access-confirm", exc) from None
+    if user_id is None:
+        raise HTTPException(400, "Liên kết không hợp lệ, đã dùng, hoặc đã hết hạn. Hãy gửi lại yêu cầu.")
+    log.info("key_access_confirmed user_id=%s", user_id)
+    return user_id
+
+
 def reset_token_user(token):
     """The account a reset link is for, or None if the link is invalid/used/expired."""
     if not token:
@@ -324,11 +376,25 @@ def reset_password(token, password, password_confirm):
 
 # ----- admin -----
 
-def list_users():
+def list_users(limit=None, offset=0, query=None):
     try:
-        return repository.list_users()
+        return repository.list_users(limit, offset, query)
     except psycopg.Error as exc:
         raise _unavailable("list-users", exc) from None
+
+
+def count_users(query=None):
+    try:
+        return repository.count_users(query)
+    except psycopg.Error as exc:
+        raise _unavailable("count-users", exc) from None
+
+
+def user_stats():
+    try:
+        return repository.user_stats()
+    except psycopg.Error as exc:
+        raise _unavailable("user-stats", exc) from None
 
 
 def set_role(user_id, role, current_user_id):

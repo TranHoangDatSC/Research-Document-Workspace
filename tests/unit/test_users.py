@@ -61,6 +61,29 @@ class ViewUserTests(UserTestCase):
         self.assertIn("alice", html)
         self.assertNotIn(self.find("alice")["password_hash"], html)
 
+    def test_list_paginates_past_the_page_size(self):
+        for i in range(25):
+            self.create(f"user{i:02d}")
+        first = self.admin.get("/admin/users").text
+        self.assertIn('class="pager-num current"', first)
+        self.assertIn("user00", first)
+        self.assertNotIn("user24", first)  # on page 2, not page 1
+        second = self.admin.get("/admin/users?page=2").text
+        self.assertIn("user24", second)
+
+    def test_search_finds_a_user_regardless_of_page(self):
+        for i in range(25):
+            self.create(f"user{i:02d}")
+        html = self.admin.get("/admin/users?q=user24").text
+        self.assertIn("user24", html)
+        self.assertNotIn("user00", html)
+
+    def test_stat_row_counts_every_account_not_just_the_page(self):
+        for i in range(25):
+            self.create(f"user{i:02d}")
+        html = self.admin.get("/admin/users").text
+        self.assertIn("<strong>26</strong>", html)  # root + 25 created, across both pages
+
 
 class UpdateUserTests(UserTestCase):
     def test_change_role(self):

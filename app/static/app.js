@@ -187,15 +187,6 @@
       });
   }
 
-  // ----- admin user list filter -----
-  var userFilter = document.getElementById('user-filter');
-  if (userFilter) userFilter.addEventListener('input', function () {
-    var q = userFilter.value.trim().toLowerCase();
-    Array.prototype.forEach.call(document.querySelectorAll('#user-table tbody tr'), function (row) {
-      row.hidden = q !== '' && (row.getAttribute('data-username') || '').indexOf(q) === -1;
-    });
-  });
-
   // ----- source upload: label-triggered file input + drag-and-drop onto the whole sources panel -----
   var uploadInput = document.getElementById('file-input');
   var uploadForm = uploadInput && uploadInput.closest('form');

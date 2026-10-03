@@ -48,16 +48,47 @@ def get_by_id(user_id, with_password=False):
             return cursor.fetchone()
 
 
-def list_users():
+def _escape_like(text):
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_users(limit=None, offset=0, query=None):
+    """`limit=None` returns every user (tests and anything that still wants
+    the whole list); the admin page passes a real limit/offset to paginate."""
+    where, params = [], []
+    if query:
+        where.append("username ILIKE %s ESCAPE '\\'")
+        params.append(f"%{_escape_like(query)}%")
+    clause = f"WHERE {' AND '.join(where)} " if where else ""
+    sql = f"SELECT {FIELDS} FROM users {clause}ORDER BY created_at"
+    if limit is not None:
+        sql += " LIMIT %s OFFSET %s"
+        params += [limit, offset]
     with postgres_connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(f"SELECT {FIELDS} FROM users ORDER BY created_at")
+            cursor.execute(sql, params)
             return cursor.fetchall()
 
 
-def count_users():
+def count_users(query=None):
+    where, params = [], []
+    if query:
+        where.append("username ILIKE %s ESCAPE '\\'")
+        params.append(f"%{_escape_like(query)}%")
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
     with postgres_connection() as connection:
-        return connection.execute("SELECT count(*) FROM users").fetchone()[0]
+        return connection.execute(f"SELECT count(*) FROM users {clause}", params).fetchone()[0]
+
+
+def user_stats():
+    """Totals for the admin dashboard's stat row — always over every account,
+    never scoped to the current page or search, so it reads the same no
+    matter which page an admin happens to be looking at."""
+    with postgres_connection() as connection:
+        row = connection.execute(
+            "SELECT count(*), count(*) FILTER (WHERE is_active), count(*) FILTER (WHERE role = 'admin') FROM users"
+        ).fetchone()
+        return {"total": row[0], "active": row[1], "admins": row[2]}
 
 
 def set_role(user_id, role):
@@ -187,6 +218,18 @@ def verify_email(token_hash):
             user = cursor.fetchone()
             _burn_tokens(cursor, user_id, "verify")
             return user
+
+
+def claim_key_access(token_hash):
+    """One-time confirm for /admin/keys: claims the token, no side effect on
+    the account otherwise. Returns the user_id, or None if invalid/used/expired."""
+    with postgres_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            user_id = _claim_token(cursor, token_hash, "key_access")
+            if user_id is None:
+                return None
+            _burn_tokens(cursor, user_id, "key_access")
+            return user_id
 
 
 # ----- app-wide settings changed at runtime by admins (table app_settings) -----

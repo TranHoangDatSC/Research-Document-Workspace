@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Request, Form, File, UploadFile, Query, HTTPException
@@ -210,12 +210,14 @@ def logout_everywhere(request: Request):
     auth_service.logout_everywhere(current_user_id(request))
     response = RedirectResponse("/login?done=signed-out", status_code=303)
     response.delete_cookie(core_auth.SESSION_COOKIE)
+    response.delete_cookie(core_auth.KEY_ACCESS_COOKIE)
     return response
 
 @router.post("/logout")
 def logout(request: Request):
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(core_auth.SESSION_COOKIE)
+    response.delete_cookie(core_auth.KEY_ACCESS_COOKIE)
     return response
 
 PROJECTS_PAGE_SIZE = 6
@@ -230,6 +232,30 @@ def pagination_window(page, total_pages):
         windowed.append(n)
     return windowed
 
+def pager_context(label, current, total_pages, href_for, ajax=False):
+    """Context for the one shared pager (_pager.html): every paginated list in
+    the app — project list, document sidebar, admin accounts — renders the
+    same numbered-with-ellipsis control, just fed a different href_for(page).
+    Empty when there's nothing to page through, so `{% include %}` is a no-op.
+    `ajax=True` adds data-source-page, read by the sources sidebar's existing
+    fetch-and-swap JS (app.js) instead of a full navigation."""
+    if total_pages <= 1:
+        return {}
+    items = []
+    for n in pagination_window(current, total_pages):
+        if n is None:
+            items.append({"ellipsis": True})
+        elif n == current:
+            items.append({"label": n, "current": True})
+        else:
+            items.append({"label": n, "href": href_for(n)})
+    return {
+        "pager_label": label, "pager_total_pages": total_pages, "pager_items": items,
+        "pager_prev_href": href_for(current - 1) if current > 1 else None,
+        "pager_next_href": href_for(current + 1) if current < total_pages else None,
+        "pager_ajax": ajax,
+    }
+
 @router.get("/")
 def home(request: Request, page: int = Query(default=1, ge=1), q: str = Query(default="", max_length=200)):
     health = json.loads(health_ready().body)
@@ -238,11 +264,12 @@ def home(request: Request, page: int = Query(default=1, ge=1), q: str = Query(de
     total_pages = max(1, -(-total // PROJECTS_PAGE_SIZE))
     page = min(page, total_pages)
     offset = (page - 1) * PROJECTS_PAGE_SIZE
+    qs = f"&q={quote(query)}" if query else ""
     return render(
         request, "index.html", health=health,
         projects=projects.list_projects(PROJECTS_PAGE_SIZE, offset, query),
         page=page, total_pages=total_pages, total_projects=total, search_query=q.strip(),
-        page_numbers=pagination_window(page, total_pages),
+        **pager_context("Phân trang dự án", page, total_pages, lambda n: f"/?page={n}{qs}"),
     )
 
 @router.post("/ui/projects")
@@ -256,13 +283,18 @@ def create_project(request: Request, name: Annotated[str, Form(max_length=200)] 
 
 SOURCES_PAGE_SIZE = 20
 
-def sources_context(project_id, offset, q, kind):
+def sources_context(request, project_id, offset, q, kind):
     """Template context for the sources sidebar. The search/filter/page live in
     the query string and are carried on every sidebar link (`source_qs`), so
     the sidebar stays as it was while documents open in the main panel."""
     q = q.strip()
     kind = kind if kind in file_types.KINDS else ""
     params = {k: v for k, v in (("q", q), ("kind", kind), ("offset", offset)) if v}
+    filter_qs = urlencode({k: v for k, v in params.items() if k != "offset"})
+    total = documents.count_documents(project_id, q or None, kind or None)
+    total_pages = max(1, -(-total // SOURCES_PAGE_SIZE))
+    page = min(offset // SOURCES_PAGE_SIZE + 1, total_pages)
+    base = f"{request.url.path}?{filter_qs + '&' if filter_qs else ''}"
     return {
         "documents": documents.list_documents(project_id, SOURCES_PAGE_SIZE, offset, q or None, kind or None),
         "offset": offset,
@@ -270,7 +302,9 @@ def sources_context(project_id, offset, q, kind):
         "source_kind": kind,
         "source_kinds": list(file_types.KINDS.values()),
         "source_qs": urlencode(params),
-        "source_filter_qs": urlencode({k: v for k, v in params.items() if k != "offset"}),
+        "source_filter_qs": filter_qs,
+        "source_total": total,
+        **pager_context("Phân trang tài liệu", page, total_pages, lambda n: f"{base}offset={(n - 1) * SOURCES_PAGE_SIZE}", ajax=True),
     }
 
 @router.get("/ui/projects/{project_id}")
@@ -281,7 +315,7 @@ def project_page(request: Request, project_id: UUID, offset: int = Query(default
         request, "project_detail.html", project=project, active_project_id=project["id"],
         kind_totals=documents.kind_totals(project_id), ai_ready=documents.ai_ready_count(project_id), rag_models=llm.available_models(),
         chat_messages=messages, current_chat_id=resolved_chat_id, chat_threads=rag_service.list_chat_threads(project_id, current_user_id(request)),
-        **sources_context(project_id, offset, q, kind),
+        **sources_context(request, project_id, offset, q, kind),
     )
 
 @router.get("/ui/projects/{project_id}/edit")
@@ -379,7 +413,7 @@ def document_page(request: Request, document_id: UUID, offset: int = Query(defau
         request, "document_detail.html", document=row, project=project, active_project_id=project["id"],
         mongo_document=mongo_document, active_document_id=row["id"], rag_models=llm.available_models(),
         chat_messages=messages, current_chat_id=resolved_chat_id, chat_threads=rag_service.list_chat_threads(project["id"], current_user_id(request)),
-        **sources_context(project["id"], offset, q, kind),
+        **sources_context(request, project["id"], offset, q, kind),
     )
 
 @router.get("/ui/documents/{document_id}/edit")
