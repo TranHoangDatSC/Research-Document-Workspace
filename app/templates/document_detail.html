@@ -108,7 +108,7 @@
   {% if document.extracted_text and document.extracted_text.text %}
   <section class="card">
     <div class="card-head">
-      <h2>{{ icon('sparkles', 15) }}Đồ thị thực thể (AI)</h2>
+      <h2>{{ icon('sparkles', 15) }} Đồ thị thực thể (AI)</h2>
       <form method="post" action="/ui/documents/{{ document.id }}/graph" data-inline-extract data-busy-label="Đang tạo đồ thị…">
         <button type="submit" class="btn ghost sm">{{ icon('refresh' if document.entity_graph else 'sparkles', 14) }}<span>{{ 'Tạo lại' if document.entity_graph else 'Tạo đồ thị thực thể' }}</span></button>
       </form>
