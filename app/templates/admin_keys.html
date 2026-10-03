@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Quản lý API key · {{ app_name }}{% endblock %}
+{% block crumbs %}<span class="crumb-current">Quản lý API key</span>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Quản trị</p>
+  <h1>Quản lý API key</h1>
+  <p class="muted lead">Danh sách khóa dùng xoay vòng (LLM_API_KEYS) khi hết hạn mức. Xem/sửa yêu cầu xác thực lại qua email.</p>
+</div>
+
+<div class="admin-toolbar">
+  {% set active_admin_tab = 'keys' %}
+  {% include "_admin_nav.html" %}
+</div>
+
+{% if not unlocked %}
+<section class="card center-card" aria-label="Cần xác thực">
+  <span class="empty-icon">{{ icon('lock', 26) }}</span>
+  <p><strong>Cần xác thực lại qua email trước khi xem key</strong></p>
+  <p class="muted small-text">Gửi một liên kết xác nhận tới email của chính tài khoản bạn (hiệu lực 15 phút, dùng được một lần). Mở liên kết đó trên trình duyệt này để mở khóa trang.</p>
+  {% if sent %}
+  <p class="notice success">Đã gửi email xác thực — kiểm tra hộp thư (hoặc log máy chủ <code>docker compose logs web</code> nếu SMTP chưa cấu hình).</p>
+  {% endif %}
+  <form method="post" action="/admin/keys/request">
+    <button class="btn primary">{{ icon('mail', 16) }}Gửi email xác thực</button>
+  </form>
+</section>
+{% else %}
+<section class="card" aria-label="Danh sách API key">
+  <div class="card-head">
+    <h2>Khóa đang lưu ({{ keys|length }})</h2>
+    <span class="muted small-text">Phiên xác thực còn hiệu lực ~15 phút</span>
+  </div>
+  {% if keys %}
+  <div class="table-wrap">
+    <table class="doc-table">
+      <thead><tr><th>Khóa</th><th class="right">Thao tác</th></tr></thead>
+      <tbody>
+        {% for k in keys %}
+        <tr>
+          <td class="mono">Khóa #{{ k.index + 1 }}: {{ k.masked }}</td>
+          <td class="right">
+            <div class="row-actions">
+              <form method="post" action="/admin/keys/{{ k.index }}/edit" class="inline-form key-edit-form">
+                <input type="password" name="value" placeholder="Dán key mới để thay" autocomplete="off" maxlength="200">
+                <button class="btn ghost sm">Thay</button>
+              </form>
+              <form method="post" action="/admin/keys/{{ k.index }}/delete" class="inline-form" onsubmit="return confirm('Xóa khóa #{{ k.index + 1 }}?')">
+                <button class="btn ghost sm danger-text">{{ icon('trash', 13) }}Xóa</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Chưa có key nào trong danh sách xoay vòng — ứng dụng dùng LLM_API_KEY đơn trong .env làm dự phòng.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Thêm key mới</h2></div>
+  <form method="post" action="/admin/keys/add" class="field-row">
+    <input type="password" name="value" placeholder="Dán API key" autocomplete="off" maxlength="200" required>
+    <button class="btn primary sm">{{ icon('plus', 14) }}Thêm</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
