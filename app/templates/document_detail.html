@@ -123,8 +123,10 @@
       </div>
     </div>
     <div class="graph-section">
-      <h3 class="side-title">{{ icon('layers', 13) }}Liên kết giữa các thực thể ({{ document.entity_graph.relations|length }})</h3>
-      <div class="graph-relations" data-graph-viz data-graph="{{ document.entity_graph|to_json_attr }}">
+      <h3 class="side-title">{{ icon('layers', 13) }}Liên kết giữa các thực thể ({{ document.entity_graph.relations|length }})
+        {% if document.entity_graph.relations %}<button type="button" class="icon-btn" data-graph-expand="#document-graph-viz" title="Xem toàn màn hình" aria-label="Xem đồ thị toàn màn hình">{{ icon('maximize', 13) }}</button>{% endif %}
+      </h3>
+      <div class="graph-relations" id="document-graph-viz" data-graph-viz data-graph="{{ document.entity_graph|to_json_attr }}">
         {% for r in document.entity_graph.relations %}
         <div class="graph-relation">
           <span class="graph-node">{{ r.subject }}</span>

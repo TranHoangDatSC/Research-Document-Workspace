@@ -359,6 +359,16 @@ def delete_chat(request: Request, project_id: UUID, chat_id: str, confirm: Annot
     rag_service.delete_chat(project_id, current_user_id(request), chat_id)
     return RedirectResponse(f"/ui/projects/{project_id}", status_code=303)
 
+@router.get("/ui/projects/{project_id}/graph")
+def project_graph(request: Request, project_id: UUID):
+    """Entity graphs of every ready document in the project, merged into one
+    (app/services/documents.py, project_entity_graph) — a real page (so it
+    works without JS too), also fetched into a <dialog> by the "Đồ thị tri
+    thức" button on the project page (app.js, data-graph-modal-fetch)."""
+    project = projects.get_project(project_id)
+    graph = documents.project_entity_graph(project_id)
+    return render(request, "project_graph.html", project=project, active_project_id=project["id"], graph=graph)
+
 @router.get("/ui/documents/{document_id}")
 def document_page(request: Request, document_id: UUID, offset: int = Query(default=0, ge=0), q: str = Query(default="", max_length=200), kind: str = Query(default="", max_length=20), chat_id: str = Query(default="", max_length=100)):
     row = documents.get_document(document_id)

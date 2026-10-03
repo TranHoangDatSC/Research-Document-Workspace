@@ -493,3 +493,24 @@ def extract_entity_graph(document_id):
         raise storage_error("graph-persist", exc, document_id) from None
     log.info("document_graph_extracted document_id=%s entities=%s relations=%s", document_id, len(graph["entities"]), len(graph["relations"]))
     return get_document(document_id)
+
+
+def project_entity_graph(project_id):
+    """Merged knowledge graph across every ready document in the project —
+    the same cross-document merge ask_project (app/services/rag.py) already
+    does for retrieval, surfaced here so a person can actually see what the
+    AI reasons across, not just the one document's graph at a time."""
+    require_project(project_id)
+    try:
+        rows = repository.list_all_documents(project_id)
+        graphs = []
+        for row in rows:
+            if row["status"] != "ready":
+                continue
+            details = repository.get_details(row["id"])
+            graph = (details or {}).get("entity_graph")
+            if graph:
+                graphs.append(graph)
+    except Exception as exc:
+        raise storage_error("project-graph-read", exc) from None
+    return entity_graph.merge_graphs(graphs)

@@ -1,9 +1,11 @@
-"""Entity/relation graph extraction: one LLM call per document (made from
-services.documents.extract_document, right after the document's text is
-saved), turning free text into a short list of named entities and
-(subject, relation, object) triples. Stored in MongoDB alongside
-`extracted_text` (see repositories.documents.update_entity_graph) and read
-back by rag.expand_by_entity_graph for graph-based retrieval (app/rag.py).
+"""Entity/relation graph extraction: one LLM call per document, triggered by
+the explicit "Tạo đồ thị thực thể" button (services.documents.extract_entity_graph)
+— never automatically, since it costs API quota just like media analysis.
+Turns free text into a short list of named entities and (subject, relation,
+object) triples. Stored in MongoDB alongside `extracted_text` (see
+repositories.documents.update_entity_graph) and read back by
+rag.expand_by_entity_graph for graph-based retrieval (app/rag.py), and by
+merge_graphs below for the project-wide view (services.documents.project_entity_graph).
 
 Best-effort only, by design: a document's extracted *text* is never blocked
 on this, and no caller needs to know whether it worked. If the model is
@@ -106,3 +108,26 @@ def extract_graph(text):
     if graph is None:
         log.info("graph_extraction_unexpected_shape")
     return graph
+
+
+def merge_graphs(graphs):
+    """Combines several documents' graphs into one: entities deduplicated by
+    exact name (first-seen order kept — the same person/project mentioned in
+    two documents becomes one node, which is the whole point of a *project*
+    graph instead of one isolated graph per document), relations
+    deduplicated by the exact (subject, relation, object) triple (the same
+    sentence often gets re-extracted near-verbatim when it appears in more
+    than one document)."""
+    entities, seen_entities = [], set()
+    relations, seen_relations = [], set()
+    for graph in graphs:
+        for name in (graph or {}).get("entities") or []:
+            if name not in seen_entities:
+                seen_entities.add(name)
+                entities.append(name)
+        for rel in (graph or {}).get("relations") or []:
+            key = (rel.get("subject"), rel.get("relation"), rel.get("object"))
+            if key not in seen_relations:
+                seen_relations.add(key)
+                relations.append(rel)
+    return {"entities": entities, "relations": relations}

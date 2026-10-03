@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Đồ thị tri thức · {{ project.name }} · {{ app_name }}{% endblock %}
+{% block crumbs %}<a href="/">Dự án</a>{{ icon('chevron-right', 14) }}<a href="/ui/projects/{{ project.id }}">{{ project.name }}</a>{{ icon('chevron-right', 14) }}<span class="crumb-current">Đồ thị tri thức</span>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Toàn dự án</p>
+    <h1>Đồ thị tri thức</h1>
+    <p class="muted small-text">Gộp đồ thị thực thể/quan hệ của mọi tài liệu đã tạo trong dự án — cùng một tên thực thể xuất hiện ở nhiều tài liệu được nối lại thành một nút, nên quan hệ giữa hai tài liệu khác nhau cũng hiện ra ở đây.</p>
+  </div>
+</div>
+<section class="card" id="project-graph-card">
+  {% if graph.entities %}
+  <div class="graph-section">
+    <h3 class="side-title">{{ icon('tag', 13) }}Thực thể ({{ graph.entities|length }})</h3>
+    <div class="graph-entities-chips">
+      {% for e in graph.entities %}<span class="chip">{{ e }}</span>{% endfor %}
+    </div>
+  </div>
+  <div class="graph-section">
+    <h3 class="side-title">{{ icon('layers', 13) }}Liên kết giữa các thực thể ({{ graph.relations|length }})
+      {% if graph.relations %}<button type="button" class="icon-btn" data-graph-expand="#project-graph-viz" title="Xem toàn màn hình" aria-label="Xem đồ thị toàn màn hình">{{ icon('maximize', 13) }}</button>{% endif %}
+    </h3>
+    <div class="graph-relations" id="project-graph-viz" data-graph-viz data-graph="{{ graph|to_json_attr }}">
+      {% for r in graph.relations %}
+      <div class="graph-relation">
+        <span class="graph-node">{{ r.subject }}</span>
+        <span class="graph-edge">{{ r.relation }}</span>
+        <span class="graph-node">{{ r.object }}</span>
+      </div>
+      {% else %}
+      <p class="muted small-text">Có thực thể nhưng chưa phát hiện quan hệ nào giữa chúng.</p>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">Chưa có đồ thị thực thể nào trong dự án. Mở một tài liệu đã trích xuất văn bản, tab "Văn bản trích xuất", bấm "Tạo đồ thị thực thể".</p>
+  {% endif %}
+</section>
+{% endblock %}

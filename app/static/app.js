@@ -381,12 +381,47 @@
     });
   }
 
+  // Minimum gap kept between any two node circles (beyond their own radii),
+  // so a node's label never gets crowded by its neighbours.
+  var GRAPH_NODE_GAP = 14;
+
+  // Pure collision pass: pushes overlapping circles apart along the line
+  // between their centers, using each node's own radius — so a long name's
+  // bigger circle claims the room its label actually needs. `fixed`, if
+  // given, never moves itself (used while that one node is being dragged).
+  function resolveGraphOverlaps(nodes, fixed, iterations) {
+    for (var pass = 0; pass < iterations; pass++) {
+      for (var i = 0; i < nodes.length; i++) {
+        for (var j = i + 1; j < nodes.length; j++) {
+          var a = nodes[i], b = nodes[j];
+          var dx = b.x - a.x, dy = b.y - a.y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+          var minDist = a.r + b.r + GRAPH_NODE_GAP;
+          if (dist >= minDist) continue;
+          var overlap = minDist - dist, ux = dx / dist, uy = dy / dist;
+          var aFixed = a === fixed, bFixed = b === fixed;
+          if (aFixed && bFixed) continue;
+          if (aFixed) { b.x += ux * overlap; b.y += uy * overlap; }
+          else if (bFixed) { a.x -= ux * overlap; a.y -= uy * overlap; }
+          else { a.x -= ux * overlap / 2; a.y -= uy * overlap / 2; b.x += ux * overlap / 2; b.y += uy * overlap / 2; }
+        }
+      }
+    }
+  }
+
   function drawEntityGraph(container, entities, relations) {
     var width = Math.max(320, container.clientWidth || 600), height = 380;
     var nodes = entities.map(function (name, i) {
       var angle = (i / entities.length) * Math.PI * 2;
-      return { name: name, x: width / 2 + Math.cos(angle) * 90, y: height / 2 + Math.sin(angle) * 90, vx: 0, vy: 0 };
+      // Bigger circle for a longer name, so the label fits inside it and
+      // the collision pass below keeps long names from crowding each other.
+      var r = Math.min(52, Math.max(24, 14 + name.length * 1.6));
+      return { name: name, r: r, x: width / 2 + Math.cos(angle) * 90, y: height / 2 + Math.sin(angle) * 90, vx: 0, vy: 0 };
     });
+    function clampNode(n) {
+      n.x = Math.max(n.r, Math.min(width - n.r, n.x));
+      n.y = Math.max(n.r, Math.min(height - n.r, n.y));
+    }
     var byName = {};
     nodes.forEach(function (n) { byName[n.name] = n; });
     var links = relations
@@ -421,11 +456,15 @@
         n.vy += (height / 2 - n.y) * 0.0015 * alpha;
         n.vx *= 0.82; n.vy *= 0.82;
         n.x += n.vx; n.y += n.vy;
-        n.x = Math.max(40, Math.min(width - 40, n.x));
-        n.y = Math.max(28, Math.min(height - 28, n.y));
+        clampNode(n);
       });
       alpha *= 0.985;
     }
+    // The spring/repulsion forces above approximate spacing but don't
+    // guarantee it — a hard collision pass afterwards makes "no overlapping
+    // labels" an actual guarantee instead of a usually.
+    resolveGraphOverlaps(nodes, null, 40);
+    nodes.forEach(clampNode);
 
     var ns = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(ns, 'svg');
@@ -453,9 +492,8 @@
       var g = document.createElementNS(ns, 'g');
       g.setAttribute('class', 'graph-node-g');
       g.setAttribute('tabindex', '0');
-      var r = Math.min(52, Math.max(24, 14 + n.name.length * 1.6));
       var circle = document.createElementNS(ns, 'circle');
-      circle.setAttribute('r', r);
+      circle.setAttribute('r', n.r);
       circle.setAttribute('class', 'graph-node-circle');
       var text = document.createElementNS(ns, 'text');
       text.setAttribute('class', 'graph-node-label');
@@ -483,8 +521,11 @@
     }
     draw();
 
-    // Drag to untangle a cluster — releases the node where it's dropped;
-    // the rest of the layout stays as the physics loop above settled it.
+    // Drag to untangle a cluster: the dragged node follows the pointer
+    // exactly, and every other node that it would overlap gets pushed out
+    // of the way (resolveGraphOverlaps with `fixed` = this node) — dragging
+    // through a crowded cluster spreads it apart instead of stacking labels
+    // on top of each other.
     nodeEls.forEach(function (n) {
       var dragging = false, offsetX = 0, offsetY = 0;
       function toLocal(evt) {
@@ -501,8 +542,10 @@
       n.g.addEventListener('pointermove', function (evt) {
         if (!dragging) return;
         var p = toLocal(evt);
-        n.data.x = Math.max(24, Math.min(width - 24, p.x + offsetX));
-        n.data.y = Math.max(20, Math.min(height - 20, p.y + offsetY));
+        n.data.x = p.x + offsetX; n.data.y = p.y + offsetY;
+        clampNode(n.data);
+        resolveGraphOverlaps(nodes, n.data, 6);
+        nodes.forEach(clampNode);
         draw();
       });
       ['pointerup', 'pointercancel'].forEach(function (ev) {
@@ -1326,6 +1369,45 @@
         Array.prototype.forEach.call(body.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
       });
     });
+  }
+
+  // ----- entity graph modal: zoom a graph (one document's, or the whole
+  // project's merged one) into a much bigger dialog instead of a tab's
+  // cramped width. Two ways in: data-graph-expand points at a [data-graph-viz]
+  // element already on the page (no fetch, it just redraws that same data
+  // bigger); data-graph-modal-fetch fetches a whole page (project_graph.html)
+  // and pulls its graph element out, same plumbing as the other modals. -----
+  var graphModal = document.getElementById('graph-modal');
+  if (graphModal && typeof graphModal.showModal === 'function') {
+    var graphModalBody = document.getElementById('graph-modal-body');
+    wireModalClose(graphModal, '[data-graph-modal-close]');
+
+    document.addEventListener('click', function (e) {
+      var expandBtn = e.target.closest('[data-graph-expand]');
+      if (!expandBtn) return;
+      e.preventDefault();
+      var source = document.querySelector(expandBtn.getAttribute('data-graph-expand'));
+      var data = source && source.getAttribute('data-graph');
+      if (!data) return;
+      graphModalBody.innerHTML = '';
+      var holder = document.createElement('div');
+      holder.setAttribute('data-graph-viz', '');
+      holder.setAttribute('data-graph', data);
+      graphModalBody.appendChild(holder);
+      graphModal.showModal();
+      enhanceEntityGraphs(graphModalBody);
+    });
+
+    if (modalsSupported) {
+      document.addEventListener('click', function (e) {
+        var link = e.target.closest('[data-graph-modal-fetch]');
+        if (!link) return;
+        e.preventDefault();
+        fetchAndShowModal(graphModal, graphModalBody, link.getAttribute('href'), ['#project-graph-card'], function (body) {
+          enhanceEntityGraphs(body);
+        });
+      });
+    }
   }
 
   // ----- upload options modal: moves the tags/authors/metadata fields out of the

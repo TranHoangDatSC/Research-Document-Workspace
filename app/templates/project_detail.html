@@ -15,6 +15,7 @@
       <p class="muted lead">{{ project.description or 'Chưa có mô tả' }}</p>
     </div>
     <div class="actions">
+      <a class="btn ghost sm" href="/ui/projects/{{ project.id }}/graph" data-graph-modal-fetch>{{ icon('layers', 14) }}Đồ thị tri thức</a>
       <a class="btn ghost sm" href="/ui/projects/{{ project.id }}/edit" data-quick-edit>{{ icon('sliders', 14) }}Sửa dự án</a>
       <a class="btn ghost sm danger-text" href="/ui/projects/{{ project.id }}/delete" data-confirm-delete>{{ icon('trash', 14) }}Xóa dự án</a>
     </div>

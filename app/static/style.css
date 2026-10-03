@@ -585,6 +585,12 @@ dialog.confirm-modal { width: min(420px, 90vw); }
 #confirm-modal-body .card { border: 0; box-shadow: none; padding: 0; }
 #confirm-modal-body .center-card { margin-top: 0; text-align: center; }
 
+/* ---------- entity graph modal (document or whole-project view, zoomed in) ---------- */
+dialog.graph-modal { width: min(960px, 95vw); max-height: min(820px, 92vh); }
+#graph-modal-body { padding: 20px; min-height: 320px; }
+#graph-modal-body .graph-svg { height: min(640px, 72vh); }
+#graph-modal-body .graph-relations > .graph-relation { display: none; } /* the list is redundant once the SVG fills the modal */
+
 /* ---------- upload options modal (tags / authors / metadata) ---------- */
 dialog.upload-modal { width: min(480px, 92vw); max-height: min(600px, 84vh); }
 .upload-modal-head { display: flex; align-items: center; justify-content: space-between; flex: none; padding: 18px 20px 0; }
