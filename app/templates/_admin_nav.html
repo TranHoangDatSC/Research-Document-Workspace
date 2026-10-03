@@ -1,0 +1,6 @@
+<nav class="admin-tabs" aria-label="Khu vực quản trị">
+  <a href="/admin/users" class="{{ 'active' if active_admin_tab == 'users' }}">{{ icon('user', 14) }}Người dùng</a>
+  <a href="/admin/stats" class="{{ 'active' if active_admin_tab == 'stats' }}">{{ icon('layers', 14) }}Thống kê AI</a>
+  <a href="/admin/settings" class="{{ 'active' if active_admin_tab == 'settings' }}">{{ icon('sliders', 14) }}Cấu hình kỹ thuật/AI</a>
+  <a href="/admin/keys" class="{{ 'active' if active_admin_tab == 'keys' }}">{{ icon('lock', 14) }}Quản lý API key</a>
+</nav>

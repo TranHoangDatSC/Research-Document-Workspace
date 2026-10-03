@@ -11,7 +11,7 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
-from app import access, auth
+from app import access, auth, settings
 from app.branding import APP_NAME
 from app.services import auth as auth_service
 from app.api.projects import router as projects_router
@@ -23,6 +23,7 @@ from app.ui.admin import router as admin_router
 
 @asynccontextmanager
 async def lifespan(app):
+    settings.apply_saved_overrides()
     logging.getLogger("uvicorn.error").info("application_started")
     yield
 

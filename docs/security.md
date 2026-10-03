@@ -26,6 +26,7 @@ cộng. Mỗi mục ghi rõ cơ chế và nơi kiểm chứng bằng test (`test
 | Bản đồ API công khai | `/docs`, `/redoc`, `/openapi.json` cần đăng nhập | `test_api_docs_need_login` |
 | Quên đổi secret mẫu trên VPS | Bootstrap từ chối khởi động nếu còn `REPLACE_WITH…` hoặc `SESSION_SECRET` < 32 ký tự khi `APP_BASE_URL` là https | `SecretsCheckTests` |
 | Cổng DB/MinIO lộ ra Internet | Compose chỉ bind `127.0.0.1`; chỉ Caddy (80/443) mở ra ngoài | `docker-compose.yaml` |
+| Cấu hình kỹ thuật/AI trên UI (`/admin/settings`) bị xem/đổi trái phép | Chỉ admin (403 với người khác); API key không gửi lại nguyên văn cho trình duyệt sau khi lưu (chỉ hiện dạng che `••••1234` hoặc số lượng key); để trống rồi lưu = giữ nguyên, không xóa nhầm; mỗi thay đổi ghi kèm `updated_by`/`updated_at` (bảng `app_settings`), log không ghi giá trị | `test_settings.py`, `AdminSettingsTests` |
 
 ## Rủi ro còn lại (chấp nhận được cho dùng nội bộ, cần xử lý nếu mở công cộng)
 
@@ -42,7 +43,13 @@ cộng. Mỗi mục ghi rõ cơ chế và nơi kiểm chứng bằng test (`test
 - **Không quét virus** tệp tải lên; không xác thực hai lớp (2FA); không có
   nhật ký kiểm toán (audit log) cho thao tác admin.
 - **Mã hóa khi lưu**: dữ liệu PostgreSQL/MongoDB/MinIO nằm trên đĩa VPS không
-  mã hóa ở tầng ứng dụng; phụ thuộc vào bảo mật VPS và bản sao lưu.
+  mã hóa ở tầng ứng dụng; phụ thuộc vào bảo mật VPS và bản sao lưu. Từ khi có
+  trang Cấu hình kỹ thuật/AI, `LLM_API_KEY`/`LLM_API_KEYS` đổi qua UI cũng lưu
+  dạng chữ rõ trong PostgreSQL (`app_settings.value`), không chỉ trong `.env`
+  như trước — cùng mức rủi ro với `.env` khi Postgres chỉ bind `127.0.0.1`
+  (không lộ ra ngoài), nhưng bản sao lưu CSDL từ giờ cũng phải coi là dữ liệu
+  nhạy cảm. Không mã hóa riêng giá trị này: cân nhắc thêm nếu môi trường có
+  nhiều người truy cập được bản sao lưu CSDL hơn là truy cập VPS.
 
 ## Danh sách kiểm tra trước khi mở domain
 

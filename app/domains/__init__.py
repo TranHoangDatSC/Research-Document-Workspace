@@ -102,3 +102,15 @@ def _cached(name: str) -> Domain:
 def current() -> Domain:
     name = os.environ.get("APP_DOMAIN", "").strip().lower() or DEFAULT_DOMAIN
     return _cached(name)
+
+
+def available():
+    """[(name, label), ...] for every domain folder with a system.md —
+    populates the persona dropdown on /admin/settings. A folder kept out of
+    Git (like "novel", see this module's docstring) simply doesn't appear
+    on a checkout that doesn't have it."""
+    result = []
+    for folder in sorted(_DOMAINS_DIR.iterdir()):
+        if folder.is_dir() and (folder / "system.md").exists():
+            result.append((folder.name, _cached(folder.name).label))
+    return result

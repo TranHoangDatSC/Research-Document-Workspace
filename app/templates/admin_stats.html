@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Thống kê AI · {{ app_name }}{% endblock %}
+{% block crumbs %}<span class="crumb-current">Thống kê AI</span>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Quản trị</p>
+  <h1>Thống kê sử dụng AI</h1>
+  <p class="muted lead">Số lượt gọi và token qua mọi tính năng dùng AI (hỏi đáp, đồ thị thực thể, phân tích media) — {{ report.label }}.</p>
+</div>
+
+<div class="admin-toolbar">
+  {% set active_admin_tab = 'stats' %}
+  {% include "_admin_nav.html" %}
+  <nav class="admin-tabs range-tabs" aria-label="Khoảng thời gian">
+    {% for name, config in ranges.items() %}
+    <a href="/admin/stats?range={{ name }}" class="{{ 'active' if report.range == name }}">{{ config.label }}</a>
+    {% endfor %}
+  </nav>
+</div>
+
+<section class="stat-row" aria-label="Tổng quan">
+  <div class="stat-card"><span class="stat-icon">{{ icon('sparkles', 18) }}</span><div><strong>{{ report.totals.calls }}</strong><small>lượt gọi AI</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('check', 18) }}</span><div><strong>{{ report.totals.ok }}</strong><small>thành công{% if report.totals.failed %} · <span class="muted">{{ report.totals.failed }} lỗi</span>{% endif %}</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('hash', 18) }}</span><div><strong>{{ '{:,}'.format(report.totals.input_tokens).replace(',', '.') }}</strong><small>token đầu vào</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('hash', 18) }}</span><div><strong>{{ '{:,}'.format(report.totals.output_tokens).replace(',', '.') }}</strong><small>token đầu ra</small></div></div>
+  <div class="stat-card"><span class="stat-icon">{{ icon('clock', 18) }}</span><div><strong>{{ report.totals.avg_latency_ms|round|int if report.totals.avg_latency_ms else '—' }}{% if report.totals.avg_latency_ms %}<span class="muted"> ms</span>{% endif %}</strong><small>thời gian phản hồi TB</small></div></div>
+</section>
+
+<section class="card" aria-label="Biểu đồ lượt gọi theo thời gian">
+  <div class="card-head"><h2>Lượt gọi theo thời gian</h2><span class="muted small-text">{{ report.label }}</span></div>
+  {% if report.buckets %}
+  {% set calls_list = report.buckets|map('last')|map(attribute='calls')|list %}
+  {% set max_calls = calls_list|max if calls_list else 1 %}
+  <div class="usage-chart" role="img" aria-label="Biểu đồ cột số lượt gọi AI theo thời gian">
+    {% for label, bucket in report.buckets %}
+    <div class="usage-bar-col" title="{{ label }}: {{ bucket.calls }} lượt ({{ bucket.ok }} thành công)">
+      <div class="usage-bar-track">
+        <div class="usage-bar" style="height: {{ ((bucket.calls / max_calls * 100)|round|int) if max_calls else 0 }}%"></div>
+        {% if bucket.calls - bucket.ok > 0 %}
+        <div class="usage-bar usage-bar-fail" style="height: {{ (((bucket.calls - bucket.ok) / max_calls * 100)|round|int) if max_calls else 0 }}%"></div>
+        {% endif %}
+      </div>
+      <span class="usage-bar-label">{{ label }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="muted small-text"><span class="usage-legend-dot ok"></span> thành công &nbsp; <span class="usage-legend-dot fail"></span> lỗi (hết hạn mức, model quá tải…)</p>
+  {% else %}
+  <p class="muted">Chưa có lượt gọi AI nào trong khoảng này.</p>
+  {% endif %}
+</section>
+
+<div class="split even">
+  <section class="card">
+    <div class="card-head"><h2>Theo model</h2></div>
+    {% if report.totals.by_model %}
+    <div class="table-wrap">
+      <table class="doc-table">
+        <thead><tr><th>Model</th><th class="right">Lượt gọi</th><th class="right">Thành công</th></tr></thead>
+        <tbody>
+          {% for model, row in report.totals.by_model %}
+          <tr><td class="mono">{{ model }}</td><td class="right">{{ row.calls }}</td><td class="right">{{ row.ok }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted small-text">Chưa có dữ liệu.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Theo tính năng</h2></div>
+    {% if report.totals.by_source %}
+    <div class="table-wrap">
+      <table class="doc-table">
+        <thead><tr><th>Tính năng</th><th class="right">Lượt gọi</th><th class="right">Thành công</th></tr></thead>
+        <tbody>
+          {% for source, row in report.totals.by_source %}
+          <tr>
+            <td>{{ {'ask': 'Hỏi đáp AI', 'graph': 'Đồ thị thực thể', 'media_ai': 'Phân tích media'}.get(source, source) }}</td>
+            <td class="right">{{ row.calls }}</td><td class="right">{{ row.ok }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted small-text">Chưa có dữ liệu.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

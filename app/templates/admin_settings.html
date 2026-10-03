@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Cấu hình kỹ thuật/AI · {{ app_name }}{% endblock %}
+{% block crumbs %}<span class="crumb-current">Cấu hình kỹ thuật/AI</span>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <p class="eyebrow">Quản trị</p>
+  <h1>Cấu hình kỹ thuật/AI</h1>
+  <p class="muted lead">Đổi ở đây có hiệu lực ngay, không cần khởi động lại máy chủ. Bỏ trống rồi lưu để quay lại giá trị trong .env.</p>
+</div>
+
+<div class="admin-toolbar">
+  {% set active_admin_tab = 'settings' %}
+  {% include "_admin_nav.html" %}
+</div>
+
+<section class="card settings-notice" aria-label="Lưu ý bảo mật">
+  <p class="muted small-text">{{ icon('lock', 14) }} API key chỉ hiển thị dạng che giấu sau khi lưu, không bao giờ gửi lại nguyên văn cho trình duyệt. Mỗi thay đổi được ghi log kèm tài khoản quản trị đã đổi (không ghi giá trị).</p>
+  <p class="muted small-text">{{ icon('info', 14) }} Các mục dưới đây chỉ đổi <strong>cách ứng dụng gọi</strong> mô hình (chọn model nào, timeout bao lâu, ngân sách suy luận…) — không có tác dụng huấn luyện lại hay tinh chỉnh (fine-tune) chính mô hình của Gemini/OpenAI. Mỗi nhà cung cấp cũng có tham số riêng: ngân sách suy luận chỉ Gemini hiểu, model OpenAI-compatible thì không.</p>
+</section>
+
+<div class="split even">
+  <section class="card">
+    <div class="card-head"><h2>Nhà cung cấp &amp; model AI</h2></div>
+    <div class="stack">
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Nhà cung cấp (LLM_PROVIDER){% if overridden['LLM_PROVIDER'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="LLM_PROVIDER">
+        <select name="value" onchange="this.form.submit()">
+          <option value="gemini" {% if effective['LLM_PROVIDER'] == 'gemini' %}selected{% endif %}>Gemini</option>
+          <option value="openai" {% if effective['LLM_PROVIDER'] == 'openai' %}selected{% endif %}>OpenAI</option>
+        </select>
+      </form>
+
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Model ưu tiên (LLM_MODEL){% if overridden['LLM_MODEL'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="LLM_MODEL">
+        <div class="field-row">
+          <input name="value" value="{{ effective['LLM_MODEL'] }}" placeholder="vd: gemini-flash-latest" maxlength="100">
+          <button class="btn secondary sm">Lưu</button>
+        </div>
+      </form>
+
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Danh sách model xoay vòng (LLM_MODELS){% if overridden['LLM_MODELS'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="LLM_MODELS">
+        <div class="field-row">
+          <input name="value" value="{{ effective['LLM_MODELS'] }}" placeholder="model-a,model-b,model-c" maxlength="500">
+          <button class="btn secondary sm">Lưu</button>
+        </div>
+        <small class="muted">Cách nhau bởi dấu phẩy, thử lần lượt khi model trước quá tải. Bỏ trống thì chỉ dùng Model ưu tiên.</small>
+      </form>
+
+      <div class="field">
+        <span class="field-label-text">API key</span>
+        <p class="muted small-text" style="margin:0">Quản lý (thêm/xoá/sửa) ở trang riêng, yêu cầu xác thực lại qua email trước khi xem được — xem <a href="/admin/keys">Quản lý API key</a>.</p>
+      </div>
+
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Base URL tuỳ chỉnh (LLM_BASE_URL){% if overridden['LLM_BASE_URL'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="LLM_BASE_URL">
+        <div class="field-row">
+          <input name="value" value="{{ effective['LLM_BASE_URL'] }}" placeholder="để trống = https://api.openai.com/v1" maxlength="200">
+          <button class="btn secondary sm">Lưu</button>
+        </div>
+        <small class="muted">Chỉ áp dụng khi Nhà cung cấp là OpenAI — trỏ sang bất kỳ máy chủ nào nói cùng giao thức chat-completions, kể cả model chạy nội bộ (vd Ollama: <code>http://địa-chỉ-máy:11434/v1</code>). API key vẫn bắt buộc có giá trị dù Ollama không kiểm tra, điền bất kỳ chuỗi nào.</small>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Hiệu năng &amp; persona</h2></div>
+    <div class="stack">
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Thời gian chờ tối đa, giây (LLM_TIMEOUT_SECONDS){% if overridden['LLM_TIMEOUT_SECONDS'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="LLM_TIMEOUT_SECONDS">
+        <div class="field-row">
+          <input type="number" name="value" min="5" max="600" value="{{ effective['LLM_TIMEOUT_SECONDS'] }}" placeholder="45">
+          <button class="btn secondary sm">Lưu</button>
+        </div>
+      </form>
+
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Ngân sách suy luận, token (LLM_THINKING_BUDGET){% if overridden['LLM_THINKING_BUDGET'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="LLM_THINKING_BUDGET">
+        <div class="field-row">
+          <input type="number" name="value" min="0" max="32768" value="{{ effective['LLM_THINKING_BUDGET'] }}" placeholder="Để trống = mặc định của model">
+          <button class="btn secondary sm">Lưu</button>
+        </div>
+        <small class="muted">Chỉ áp dụng khi Nhà cung cấp là Gemini, cho model "thinking". Số thấp hơn trả lời nhanh hơn nhưng suy luận ít hơn.</small>
+      </form>
+
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Persona AI (APP_DOMAIN){% if overridden['APP_DOMAIN'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="APP_DOMAIN">
+        <select name="value" onchange="this.form.submit()">
+          {% for name, label in domain_options %}
+          <option value="{{ name }}" {% if effective['APP_DOMAIN'] == name or (not effective['APP_DOMAIN'] and name == 'research') %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+
+      <form method="post" action="/admin/settings" class="field">
+        <span class="field-label-text">Phân tích ảnh/âm thanh/video bằng AI (AI_MEDIA_ANALYSIS){% if overridden['AI_MEDIA_ANALYSIS'] %} <span class="badge ready sm">đã đổi qua UI</span>{% endif %}</span>
+        <input type="hidden" name="key" value="AI_MEDIA_ANALYSIS">
+        <select name="value" onchange="this.form.submit()">
+          <option value="true" {% if effective['AI_MEDIA_ANALYSIS'] != 'false' %}selected{% endif %}>Bật</option>
+          <option value="false" {% if effective['AI_MEDIA_ANALYSIS'] == 'false' %}selected{% endif %}>Tắt</option>
+        </select>
+        <small class="muted">Tắt thì nút "Phân tích bằng AI" ở từng tệp ảnh/âm thanh/video báo lỗi — tệp không rời khỏi máy chủ.</small>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}
