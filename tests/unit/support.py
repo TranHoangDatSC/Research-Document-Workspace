@@ -27,6 +27,7 @@ from app.main import app
 from app.repositories import chats as chats_repo
 from app.repositories import documents as documents_repo
 from app.repositories import projects as projects_repo
+from app.repositories import usage as usage_repo
 from app.repositories import users as users_repo
 from app.services import auth as auth_service
 from app.services import documents as documents_service
@@ -64,6 +65,7 @@ class FakeBackend:
         self.users = {}      # PostgreSQL users: id -> row (with password_hash)
         self.details = {}    # MongoDB document_details: str(document_id) -> dict
         self.chats = []      # MongoDB chat_messages
+        self.usage_log = []  # MongoDB llm_usage
         self.tokens = {}     # PostgreSQL password_reset_tokens (reset + verify): hash -> row
         self.settings = {}   # PostgreSQL app_settings
         self.mail = []       # emails "sent": (to, subject, body)
@@ -152,17 +154,20 @@ class FakeBackend:
         if row and row["status"] == "pending":
             row["status"] = "failed"
 
+    def _matching_documents(self, project_id, query, extensions):
+        return [
+            r for r in self.documents.values()
+            if r["project_id"] == project_id
+            and (not query or query.lower() in r["original_name"].lower())
+            and (not extensions or r["object_name"].endswith(tuple(extensions)))
+        ]
+
     def list_documents(self, project_id, limit, offset, query=None, extensions=None):
-        rows = sorted(
-            (
-                r for r in self.documents.values()
-                if r["project_id"] == project_id
-                and (not query or query.lower() in r["original_name"].lower())
-                and (not extensions or r["object_name"].endswith(tuple(extensions)))
-            ),
-            key=lambda r: r["created_at"], reverse=True,
-        )
+        rows = sorted(self._matching_documents(project_id, query, extensions), key=lambda r: r["created_at"], reverse=True)
         return [dict(r) for r in rows[offset:offset + limit]]
+
+    def count_documents(self, project_id, query=None, extensions=None):
+        return len(self._matching_documents(project_id, query, extensions))
 
     def extension_totals(self, project_id):
         totals = {}
@@ -271,6 +276,21 @@ class FakeBackend:
         self._check("mongo")
         self.chats = [m for m in self.chats if m["project_id"] != str(project_id)]
 
+    # ----- MongoDB: llm_usage (app/repositories/usage.py) -----
+    def record_llm_usage(self, source, provider, model, ok, latency_ms, usage=None, error=None):
+        self._check("mongo")
+        self.usage_log.append({
+            "created_at": self._now(), "source": source, "provider": provider, "model": model,
+            "ok": bool(ok), "latency_ms": latency_ms,
+            "input_tokens": (usage or {}).get("input"), "output_tokens": (usage or {}).get("output"),
+            "thinking_tokens": (usage or {}).get("thinking"), "cached_tokens": (usage or {}).get("cached"),
+            "error": error,
+        })
+
+    def list_llm_usage_since(self, since):
+        self._check("mongo")
+        return [r for r in self.usage_log if r["created_at"] >= since]
+
     # ----- PostgreSQL: users -----
     def seed_user(self, username, password=None, role="user", is_active=True, email=None, email_verified=True):
         # PBKDF2 is deliberately slow (~0.1 s): only hash when the test logs in
@@ -313,11 +333,26 @@ class FakeBackend:
             return None
         return dict(row) if with_password else self._public_user(row)
 
-    def list_users(self):
-        return [self._public_user(u) for u in sorted(self.users.values(), key=lambda u: u["created_at"])]
+    def list_users(self, limit=None, offset=0, query=None):
+        rows = [self._public_user(u) for u in sorted(self.users.values(), key=lambda u: u["created_at"])]
+        if query:
+            rows = [u for u in rows if query.lower() in u["username"].lower()]
+        if limit is not None:
+            rows = rows[offset:offset + limit]
+        return rows
 
-    def count_users(self):
+    def count_users(self, query=None):
+        if query:
+            return len([u for u in self.users.values() if query.lower() in u["username"].lower()])
         return len(self.users)
+
+    def user_stats(self):
+        rows = list(self.users.values())
+        return {
+            "total": len(rows),
+            "active": len([u for u in rows if u["is_active"]]),
+            "admins": len([u for u in rows if u["role"] == "admin"]),
+        }
 
     def _update_user(self, user_id, bump=False, **fields):
         row = self._user(user_id)
@@ -380,6 +415,13 @@ class FakeBackend:
         self._burn(user["id"], "verify")
         return self._public_user(user)
 
+    def claim_key_access(self, token_hash):
+        user = self._claim(token_hash, "key_access")
+        if user is None:
+            return None
+        self._burn(user["id"], "key_access")
+        return user["id"]
+
     # ----- PostgreSQL: app_settings -----
     def get_setting(self, key):
         return self.settings.get(key)
@@ -415,7 +457,7 @@ class FakeBackend:
             documents_repo: {
                 name: getattr(self, name) for name in (
                     "project_exists", "get_document", "get_owned_document", "create_pending", "mark_ready", "mark_failed",
-                    "list_documents", "list_all_documents", "extension_totals", "begin_delete", "finish_delete",
+                    "list_documents", "count_documents", "list_all_documents", "extension_totals", "begin_delete", "finish_delete",
                     "insert_details", "get_details", "delete_details", "update_extracted_text", "update_entity_graph",
                     "update_details", "count_with_text",
                 )
@@ -424,6 +466,7 @@ class FakeBackend:
                 "add_messages": self.add_messages, "list_messages": self.list_messages, "list_chats": self.list_chats,
                 "delete_chat": self.delete_chat, "delete_project": self.delete_project_chats,
             },
+            usage_repo: {"record": self.record_llm_usage, "list_since": self.list_llm_usage_since},
             users_repo: {
                 "create_user": self.create_user, "get_by_username": self.get_by_username,
                 "get_by_id": self.get_user_by_id, "list_users": self.list_users,
@@ -432,6 +475,7 @@ class FakeBackend:
                 "reset_password": self.reset_password, "verify_email": self.verify_email,
                 "set_password": self.set_password, "bump_session_version": self.bump_session_version,
                 "set_email_verified": self.set_email_verified, "get_setting": self.get_setting, "set_setting": self.set_setting,
+                "user_stats": self.user_stats, "claim_key_access": self.claim_key_access,
             },
             documents_service: {"minio_client": lambda: self, "bucket_name": lambda: "test"},
             health: {name: (lambda: None) for name in ("check_postgres", "check_mongodb", "check_minio")},
