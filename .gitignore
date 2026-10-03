@@ -41,3 +41,7 @@ logs/
 # Secrets documentation and local environment
 docs/deploy-guide-bkns.md
 docs/sercet-management.md
+
+# Personal onboarding notes (how to re-read this codebase without an AI
+# agent) — not for the shared repo, kept local only.
+docs/huong-dan-doc-hieu-code.md
