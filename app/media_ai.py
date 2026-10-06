@@ -1,16 +1,11 @@
-"""Turns images, audio and video into text with Gemini, so the AI can answer
-questions about them like any other document: OCR + description for images,
-a timestamped transcript (+ scene notes for video) for audio/video.
+"""Images, audio and video to text with Gemini: OCR + description for images,
+timestamped transcript (+ scene notes) for audio/video.
 
-Uses the Gemini Files API (REST, standard library only — same protocol as
-the official google-genai SDK): the file is streamed from MinIO to Google in
-UPLOAD_CHUNK pieces, so a large video never sits in this server's memory;
-the model then reads it by URI, and the uploaded copy is deleted afterwards
-(Google would also expire it after 48 hours).
+Gemini Files API over stdlib urllib: the file is streamed MinIO -> Google in
+UPLOAD_CHUNK pieces (never fully in memory), read by URI, then deleted
+(Google also expires it after 48 h).
 
-Privacy: the media leaves your server and goes to Google. On the free tier
-Google may use it to improve its products. Turn the feature off with
-AI_MEDIA_ANALYSIS=false (see .env.example).
+Privacy: the file leaves the server; disable with AI_MEDIA_ANALYSIS=false.
 """
 import json
 import logging
@@ -134,9 +129,7 @@ def _delete(key, file):
 
 
 def _record_usage(model, ok, started, usage=None, error=None):
-    """Best-effort, same as llm.py's own _record_usage: a down MongoDB must
-    never fail the analysis itself, only leave this attempt off the admin
-    stats page (app/services/usage_stats.py)."""
+    """Best-effort, like llm._record_usage."""
     try:
         usage_repository.record("media_ai", "gemini", model, ok, (time.monotonic() - started) * 1000, usage=usage, error=error)
     except Exception as exc:
@@ -180,7 +173,7 @@ def analyze(kind, open_stream, size, mime, display_name):
         raise MediaAIError("Phân tích ảnh/âm thanh/video bằng AI đang tắt (AI_MEDIA_ANALYSIS=false)", status=422)
     if llm.current_provider() != "gemini":
         raise MediaAIError("Phân tích ảnh/âm thanh/video cần LLM_PROVIDER=gemini", status=422)
-    keys = llm._api_keys()
+    keys = llm.api_keys()
     models = llm.available_models()
     if not keys or not models:
         raise MediaAIError("Chưa cấu hình LLM_API_KEY / LLM_MODEL trong .env", status=422)

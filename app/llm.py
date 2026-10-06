@@ -1,21 +1,13 @@
-"""Minimal HTTP client for a free-tier chat LLM (Gemini or an OpenAI-compatible
-API). Standard library only (urllib) — one HTTP call does not need an SDK.
-Configured entirely from environment variables; see .env.example.
+"""HTTP client for a chat LLM (Gemini or any OpenAI-compatible API), stdlib
+urllib only. Configured from environment variables (see .env.example).
 
-Every call sends a separate system instruction and an explicit temperature
-(taken from the active domain, see app/domains/). Without them Gemini runs at
-its default ~1.0 and answers drift in tone, length and layout between calls.
+Each call sends a system instruction and an explicit temperature from the
+active domain (app/domains/), so answers keep a stable tone and layout.
 
-The free tier returns 503 ("model overloaded") fairly often at busy times,
-and a given key can also hit its own per-minute quota (429). Neither means
-the *question* failed, so `ask()` rotates through every configured model and
-every configured key (keys outer, models inner — 503 is a model problem, 429
-is a key problem) and only gives up after every combination has failed.
-
-Models are tried one at a time, in the configured order, not raced in
-parallel: racing spent one request of every model's free quota per question
-(hitting 429 sooner) and returned whichever model was fastest — usually the
-weakest — so answer quality changed from one question to the next.
+Free tiers often answer 503 (model overloaded) or 429 (key quota). `ask()`
+therefore tries every key x model pair, one at a time in configured order
+(keys outer, models inner), and fails only when all of them fail. Sequential,
+not parallel: racing models burns quota and returns whichever is fastest.
 """
 import json
 import logging
@@ -29,15 +21,13 @@ from app.repositories import usage as usage_repository
 log = logging.getLogger("uvicorn.error")
 
 DEFAULT_MODELS = {
-    # "-latest" are Google's own self-updating aliases — safer as a default
-    # than pinning an exact version, which WILL be deprecated eventually.
+    # "-latest" aliases are updated by Google, so they don't go stale.
     "gemini": ["gemini-flash-latest", "gemini-2.5-flash", "gemini-pro-latest"],
     "openai": ["gpt-4o-mini", "gpt-4o"],
 }
 
-# Answers are now longer and structured (and may carry the full text of the
-# selected documents), so 15s cut off legitimate replies. 503/429 come back in
-# well under a second, so this only bounds a genuinely hung request.
+# Long answers over full-text context need time; 503/429 return in < 1 s,
+# so this only bounds a hung request.
 DEFAULT_TIMEOUT_SECONDS = 45
 
 
@@ -67,9 +57,8 @@ def _gemini_generation_config(temperature):
     config = {}
     if temperature is not None:
         config["temperature"] = temperature
-    # Opt-in: thinking models (2.5 / "-latest") spend seconds reasoning even on
-    # simple questions. A budget caps that, but the accepted field differs
-    # between model generations — unset means "leave the model's default".
+    # Optional cap on "thinking" tokens; unset keeps the model default
+    # (some model generations reject this field).
     budget = os.environ.get("LLM_THINKING_BUDGET", "").strip()
     if budget.lstrip("-").isdigit():
         config["thinkingConfig"] = {"thinkingBudget": int(budget)}
@@ -106,12 +95,8 @@ def _call_gemini(api_key, model, prompt, system=None, temperature=None, history=
 
 
 def _openai_base_url():
-    """https://api.openai.com/v1 unless overridden — any server speaking the
-    same chat-completions protocol works here, which covers more than OpenAI
-    itself: Ollama, LM Studio, vLLM and most local-model runners all expose
-    an OpenAI-compatible endpoint, so pointing LLM_BASE_URL at one (e.g.
-    http://localhost:11434/v1 for Ollama) is enough to use it — no code
-    change, just LLM_PROVIDER=openai + this setting in .env or /admin/settings."""
+    """LLM_BASE_URL or https://api.openai.com/v1. Any chat-completions server
+    works (Ollama, LM Studio, vLLM, e.g. http://localhost:11434/v1)."""
     return os.environ.get("LLM_BASE_URL", "").strip().rstrip("/") or "https://api.openai.com/v1"
 
 
@@ -162,7 +147,7 @@ def available_models():
     return list(DEFAULT_MODELS.get(provider, []))
 
 
-def _api_keys():
+def api_keys():
     configured = _split_env_list(os.environ.get("LLM_API_KEYS", ""))
     if configured:
         return configured
@@ -192,9 +177,7 @@ def _normalize_history(history):
 
 
 def _record_usage(source, provider, model, started, ok, usage=None, error=None):
-    """Best-effort, like every other storage write in this app: a down
-    MongoDB must never fail the actual question, it only means this one
-    attempt is missing from the admin stats page (app/services/usage_stats.py)."""
+    """Best-effort: a MongoDB outage only drops this row from the stats page."""
     try:
         usage_repository.record(source, provider, model, ok, (time.monotonic() - started) * 1000, usage=usage, error=error)
     except Exception as exc:
@@ -229,15 +212,12 @@ def _attempt(call, key, model, prompt, system, temperature, history, source, pro
 
 
 def ask(prompt, preferred_model=None, system=None, temperature=None, history=None, source="ask"):
-    """Returns (answer_text, model_used). Keys outer, models inner, one at a
-    time; `preferred_model` (the person's pick in the UI) goes first.
+    """Returns (answer_text, model_used). `preferred_model` is tried first.
     `history`: earlier turns as [(role, text)], role "user" or "model".
-    `source`: a short label ("ask", "graph", ...) recorded with every
-    attempt's usage (app/repositories/usage.py) — which feature spent the
-    tokens, for the admin stats page's per-source breakdown."""
+    `source`: feature label ("ask", "graph", ...) stored with usage stats."""
     history = _normalize_history(history)
     provider = current_provider()
-    keys = _api_keys()
+    keys = api_keys()
     if not provider or not keys:
         raise LLMError(
             "LLM_PROVIDER/LLM_API_KEY(S) chưa được cấu hình trong .env "

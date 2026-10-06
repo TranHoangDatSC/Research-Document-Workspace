@@ -1,3 +1,8 @@
+"""FastAPI entry point: routers, error pages and three HTTP middlewares.
+
+Starlette runs the middleware registered last as the outermost, so a request
+passes security_headers -> require_login -> same_origin_forms -> route.
+"""
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,7 +23,7 @@ from app.api.projects import router as projects_router
 from app.api.health import router as health_router
 from app.api.documents import router as documents_router
 from app.api.rag import router as rag_router
-from app.ui.routes import router as ui_router, error_page
+from app.ui.routes import router as ui_router, error_page, is_https
 from app.ui.admin import router as admin_router
 
 @asynccontextmanager
@@ -64,14 +69,9 @@ async def html_validation_error(request: Request, exc):
         return error_page(request, 422, "Dữ liệu không hợp lệ. Kiểm tra ID, các trường và file đã chọn.")
     return await request_validation_exception_handler(request, exc)
 
-def is_https(request):
-    # Behind Caddy uvicorn sees plain http; Caddy says what the browser used.
-    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
-
 def same_site_origin(request):
-    """Origin of a form post must be this site. Compared by host only: behind
-    Caddy the browser posts from https://host while uvicorn sees http://host
-    (comparing schemes too rejected every form on the VPS)."""
+    """CSRF check: a form post must come from this site. Host only, since
+    behind Caddy the browser uses https while uvicorn sees http."""
     origin = request.headers.get("origin")
     if request.headers.get("sec-fetch-site") == "cross-site":
         return False
@@ -96,8 +96,8 @@ async def require_login(request: Request, call_next):
     session = auth.verify_session_token(request.cookies.get(auth.SESSION_COOKIE))
     user = None
     if session is not None:
-        # Every request is checked against the database: a locked account, a
-        # changed password or "log out everywhere" ends the session at once.
+        # Checked against the database on every request, so a lock, password
+        # change or "log out everywhere" takes effect at once.
         try:
             user = await run_in_threadpool(auth_service.session_user, session)
         except HTTPException as exc:

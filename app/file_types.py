@@ -1,16 +1,11 @@
-"""Which files can be stored, how they are grouped, and how big they may be.
+"""Allowed file types, their kinds and size limits: one source for the upload
+check, the browser file picker, previews and text extraction.
 
-The single source of truth for the upload allowlist (services/documents.py),
-the file picker and size check in the browser (templates + app.js), previews
-and whether a file has text to extract for AI questions.
+Only the extension is checked. Files are served back with the allowlisted
+MIME type and `nosniff`, so a renamed file can't run as something else.
 
-Only the extension is checked, never the content: stored files are always
-served with their allowlisted MIME type and `X-Content-Type-Options: nosniff`,
-so a renamed file can't be run as something else by the browser.
-
-Size limits per kind, in MiB, can be raised or lowered without a code change
-via `MAX_UPLOAD_MB_<KIND>` (e.g. MAX_UPLOAD_MB_VIDEO=1000). Uploads are
-streamed to MinIO, so a limit costs disk space, not server memory.
+Per-kind limits (MiB) can be overridden with MAX_UPLOAD_MB_<KIND>. Uploads
+stream to MinIO, so a higher limit costs disk, not RAM.
 """
 import os
 from dataclasses import dataclass
@@ -22,15 +17,9 @@ class Kind:
     label: str
     icon: str
     default_limit_mb: int
-    # How its text for AI questions is produced: "local" = parsed on this
-    # server (app/extractors.py), "ai" = read by Gemini (app/media_ai.py:
-    # OCR/description/transcript). Every kind has one now.
+    # "local" = parsed here (extractors.py), "ai" = read by Gemini (media_ai.py).
     text_via: str = "local"
     preview: str | None = None  # "image" | "audio" | "video": shown inline on the document page
-
-    @property
-    def extractable(self):
-        return True
 
     @property
     def needs_ai(self):

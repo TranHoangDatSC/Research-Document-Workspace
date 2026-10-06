@@ -1,4 +1,5 @@
-"""Server-rendered UI. Calls shared Python services, never loopback HTTP."""
+"""Server-rendered HTML pages (Jinja2). Calls the same services as the JSON
+API directly, never over loopback HTTP."""
 import json
 import logging
 import os
@@ -30,14 +31,10 @@ templates.env.filters["file_kind"] = lambda doc: file_types.kind_of(doc["object_
 templates.env.globals["upload_accept"] = file_types.accept_attribute
 templates.env.globals["upload_limits_json"] = lambda: json.dumps(file_types.limits_by_extension())
 templates.env.globals["upload_summary"] = file_types.summary
-# JSON embedded in an HTML attribute (entity graph data for app.js to draw) —
-# unlike upload_limits_json above, this carries LLM-extracted text (entity
-# names), which can contain quotes, so it must be HTML-escaped, not just JSON-encoded.
+# JSON in an HTML attribute; holds LLM output, so it must be HTML-escaped.
 templates.env.filters["to_json_attr"] = lambda data: Markup(escape(json.dumps(data, ensure_ascii=False)))
-# Cache-busts /static/* on every process start so a redeploy can't get stuck
-# behind a browser's cached style.css/app.js.
+# Cache-busts /static/* on each start so browsers fetch new CSS/JS after a deploy.
 templates.env.globals["asset_version"] = str(int(time.time()))
-# Vietnamese product name and labels (app/branding.py) instead of raw codes.
 templates.env.globals["app_name"] = branding.APP_NAME
 templates.env.globals["app_short_name"] = branding.APP_SHORT_NAME
 templates.env.globals["app_tagline"] = branding.APP_TAGLINE
@@ -75,6 +72,7 @@ def auth_page(request, name, status_code=200, headers=None, **context):
     return templates.TemplateResponse(request=request, name=name, context=context, status_code=status_code, headers=headers)
 
 def is_https(request):
+    # Behind Caddy uvicorn sees http; X-Forwarded-Proto says what the browser used.
     return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
 
 def start_session(request, user, to="/"):
@@ -86,9 +84,8 @@ def start_session(request, user, to="/"):
     return response
 
 def email_link_base(request):
-    """Base URL for emailed links. Must come from APP_BASE_URL when mail is
-    really sent: building it from the request's Host header would let anyone
-    trigger an email whose link points at their own site. None = don't send."""
+    """Base URL for emailed links. From APP_BASE_URL when real mail is sent
+    (a Host header could point links at another site). None = don't send."""
     configured = os.environ.get("APP_BASE_URL", "").strip()
     if configured:
         return configured
@@ -233,12 +230,8 @@ def pagination_window(page, total_pages):
     return windowed
 
 def pager_context(label, current, total_pages, href_for, ajax=False):
-    """Context for the one shared pager (_pager.html): every paginated list in
-    the app — project list, document sidebar, admin accounts — renders the
-    same numbered-with-ellipsis control, just fed a different href_for(page).
-    Empty when there's nothing to page through, so `{% include %}` is a no-op.
-    `ajax=True` adds data-source-page, read by the sources sidebar's existing
-    fetch-and-swap JS (app.js) instead of a full navigation."""
+    """Context for the shared pager (_pager.html). Empty for a single page.
+    `ajax=True` lets app.js swap the sources sidebar without a reload."""
     if total_pages <= 1:
         return {}
     items = []
@@ -284,9 +277,8 @@ def create_project(request: Request, name: Annotated[str, Form(max_length=200)] 
 SOURCES_PAGE_SIZE = 20
 
 def sources_context(request, project_id, offset, q, kind):
-    """Template context for the sources sidebar. The search/filter/page live in
-    the query string and are carried on every sidebar link (`source_qs`), so
-    the sidebar stays as it was while documents open in the main panel."""
+    """Sources sidebar context. Search/filter/page stay in the query string
+    (`source_qs`) so the sidebar keeps its state across document pages."""
     q = q.strip()
     kind = kind if kind in file_types.KINDS else ""
     params = {k: v for k, v in (("q", q), ("kind", kind), ("offset", offset)) if v}
@@ -354,11 +346,8 @@ def current_user_id(request):
     return user["user_id"] if user else None
 
 def chat_history(request, project_id, chat_id=None):
-    """(messages, resolved_chat_id). chat_id="new" is a sentinel from the
-    no-JS "+ Cuộc trò chuyện mới" link: show an empty thread, and hand back a
-    freshly generated (message-less) id instead of resolving to the most
-    recent one, so the ask-form's hidden field carries a genuinely new
-    thread forward even without JS to generate one client-side."""
+    """(messages, resolved_chat_id). chat_id="new" (no-JS "new chat" link)
+    returns an empty thread with a fresh id."""
     user_id = current_user_id(request)
     if not user_id:
         return [], None
@@ -372,9 +361,7 @@ def ask_project(request: Request, project_id: UUID, question: Annotated[str, For
     user_id = current_user_id(request)
     ratelimit.check("ask", request, user_id=user_id)
     rag_service.ask_project(project_id, question, model or None, document_ids or None, user_id=user_id, chat_id=chat_id or None)
-    # The exchange is now in the stored history, which the project page
-    # renders — and that thread is now the most recently used one, so a plain
-    # reload (no chat_id needed) lands back on it.
+    # The answer is in the stored history; the page reopens this thread.
     return RedirectResponse(f"/ui/projects/{project_id}#ai-panel", status_code=303)
 
 @router.get("/ui/projects/{project_id}/chat/{chat_id}/delete")
@@ -395,10 +382,8 @@ def delete_chat(request: Request, project_id: UUID, chat_id: str, confirm: Annot
 
 @router.get("/ui/projects/{project_id}/graph")
 def project_graph(request: Request, project_id: UUID):
-    """Entity graphs of every ready document in the project, merged into one
-    (app/services/documents.py, project_entity_graph) — a real page (so it
-    works without JS too), also fetched into a <dialog> by the "Đồ thị tri
-    thức" button on the project page (app.js, data-graph-modal-fetch)."""
+    """Merged entity graph of the project. A full page (works without JS),
+    also loaded into a <dialog> by app.js."""
     project = projects.get_project(project_id)
     graph = documents.project_entity_graph(project_id)
     return render(request, "project_graph.html", project=project, active_project_id=project["id"], graph=graph)
@@ -430,7 +415,7 @@ def edit_document(request: Request, document_id: UUID, tags: Annotated[str, Form
 @router.post("/ui/documents/{document_id}/extract")
 def extract(request: Request, document_id: UUID):
     documents.extract_document(document_id)
-    # Land back on the extracted-text tab, not the default "Thông tin" tab (app.js reads the hash).
+    # #extract opens the extracted-text tab (read by app.js).
     return RedirectResponse(f"/ui/documents/{document_id}#extract", status_code=303)
 
 @router.post("/ui/documents/{document_id}/graph")
@@ -447,7 +432,7 @@ def confirm_delete(request: Request, document_id: UUID):
 def delete(request: Request, document_id: UUID, confirm: Annotated[str, Form()] = ""):
     if confirm != "delete":
         raise HTTPException(422, "Cần xác nhận xóa tài liệu.")
-    # Preserve redirect target from SQL even if metadata/object is missing.
+    # Read the project id before deleting, for the redirect.
     row = documents.document_row(document_id)
     documents.delete_document(document_id)
     return RedirectResponse(f"/ui/projects/{row['project_id']}", status_code=303)
