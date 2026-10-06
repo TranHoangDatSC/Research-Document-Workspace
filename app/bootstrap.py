@@ -1,3 +1,8 @@
+"""Run before uvicorn (Dockerfile CMD): creates tables, indexes and the
+bucket if missing (idempotent), seeds the first admin, and refuses to start
+in production with placeholder secrets. The check_* functions are reused by
+/health/ready. There is no migration tool: schema changes are additive
+statements below."""
 import os
 import time
 from uuid import uuid4
@@ -38,17 +43,14 @@ def initialize_postgres():
             ON documents(project_id)
         """)
 
-        # Day 3 additive status migration, in the same PostgreSQL transaction.
-        # Keeps all rows, files, IDs and existing statuses.
+        # Adds the 'deleting' status (used by retryable deletes).
         connection.execute("ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_status_check")
         connection.execute("""
             ALTER TABLE documents ADD CONSTRAINT documents_status_check
             CHECK (status IN ('pending', 'ready', 'failed', 'deleting'))
         """)
 
-        # Day 6: admin-managed accounts. `role` is a plain CHECK constraint,
-        # additive like the migration above, so a future role only needs the
-        # same kind of DROP/ADD here.
+        # Accounts. A new role only needs the CHECK constraint widened.
         connection.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id UUID PRIMARY KEY,
@@ -60,12 +62,11 @@ def initialize_postgres():
             )
         """)
 
-        # Self-service accounts: email for password reset (nullable — accounts
-        # made before this have none), unique regardless of letter case.
+        # Email: optional, unique ignoring case.
         connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(254)")
         connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key ON users (lower(email))")
-        # Only a SHA-256 of each reset token is stored: a database leak doesn't
-        # hand out working reset links.
+        # One-time tokens (reset / verify / key_access). Only the SHA-256 is
+        # stored, so a database leak gives no working links.
         connection.execute("""
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 token_hash CHAR(64) PRIMARY KEY,
@@ -78,12 +79,10 @@ def initialize_postgres():
 
         # Session revocation: cookies carry this counter; bumping it ends them.
         connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0")
-        # Email verification. Accounts that existed before were made by an
-        # admin, so they count as verified (DEFAULT true fills them); every
-        # account created from now on starts unverified (SET DEFAULT false).
+        # Email verification: existing rows become verified (DEFAULT true),
+        # new accounts start unverified (SET DEFAULT false).
         connection.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true")
         connection.execute("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT false")
-        # The token table also holds email-verification tokens now.
         connection.execute("ALTER TABLE password_reset_tokens ADD COLUMN IF NOT EXISTS purpose VARCHAR(10) NOT NULL DEFAULT 'reset'")
         # Settings admins change at runtime (e.g. whether sign-up is open).
         connection.execute("""
@@ -95,9 +94,8 @@ def initialize_postgres():
             )
         """)
 
-        # Per-user data: every project has an owner and only the owner sees it.
-        # Nullable so this ALTER works on existing rows; assign_unowned_projects()
-        # gives those to the first admin once accounts exist.
+        # Project owner. Nullable for old rows; assign_unowned_projects()
+        # gives them to the first admin.
         connection.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id)")
         connection.execute("CREATE INDEX IF NOT EXISTS projects_owner_id_idx ON projects(owner_id)")
 
@@ -106,8 +104,7 @@ def initialize_mongodb():
     with mongo_client() as client:
         collection = client[os.environ["MONGO_DB"]]["document_details"]
         collection.create_index("document_id", unique=True)
-        # Chat history (app/repositories/chats.py): always read per
-        # (project, user), newest first.
+        # Chat history is always read per (project, user), newest first.
         client[os.environ["MONGO_DB"]]["chat_messages"].create_index(
             [("project_id", 1), ("user_id", 1), ("created_at", -1), ("seq", -1)]
         )
@@ -158,11 +155,8 @@ def check_minio():
 
 
 def seed_admin_user():
-    """Best-effort, idempotent: create the first admin from env vars if none
-    exists yet. Never overwrites an existing account with the same username.
-    Skipped (not fatal) when ADMIN_USERNAME/ADMIN_PASSWORD are unset, so
-    existing .env files without them still boot.
-    """
+    """Creates the admin from ADMIN_USERNAME/ADMIN_PASSWORD if that username
+    doesn't exist. Never overwrites; skipped when the variables are unset."""
     username = os.environ.get("ADMIN_USERNAME")
     password = os.environ.get("ADMIN_PASSWORD")
     if not username or not password:
@@ -183,8 +177,7 @@ def seed_admin_user():
 
 
 def assign_unowned_projects():
-    """Projects created before per-user ownership go to the oldest admin, so
-    they don't silently vanish from everyone's view. Idempotent."""
+    """Gives ownerless projects to the oldest admin. Idempotent."""
     with postgres_connection() as connection:
         admin = connection.execute(
             "SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
@@ -203,9 +196,8 @@ SECRET_SETTINGS = ("SESSION_SECRET", "ADMIN_PASSWORD", "POSTGRES_PASSWORD", "MON
 
 
 def check_secrets():
-    """Placeholder or short secrets: a warning locally, a refusal to start in
-    production (APP_BASE_URL on https) — a forgotten REPLACE_WITH_… on a
-    public VPS means anyone can forge session cookies or log in as admin."""
+    """Placeholder or short secrets: a warning locally, a refusal to start
+    in production (APP_BASE_URL is https)."""
     problems = [name for name in SECRET_SETTINGS if "REPLACE_WITH" in os.environ.get(name, "")]
     if len(os.environ.get("SESSION_SECRET", "")) < 32:
         problems.append("SESSION_SECRET (< 32 ký tự)")

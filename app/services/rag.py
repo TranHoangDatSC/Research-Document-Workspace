@@ -1,6 +1,6 @@
-"""Ask-your-documents: full text or BM25 retrieval over extracted text + one
-LLM call. No vector DB, no embeddings (see app/rag.py, app/llm.py). Persona,
-rules and tuning come from the active domain (app/domains/, APP_DOMAIN).
+"""Ask questions over a project's documents: retrieval (app/rag.py) + one LLM
+call (app/llm.py), with chat history in MongoDB. Persona and tuning come from
+the active domain (app/domains/, APP_DOMAIN).
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -18,10 +18,8 @@ MAX_QUESTION_LENGTH = 2000
 # Vietnam has no DST; a fixed offset avoids needing tzdata on Windows/slim images.
 _LOCAL_TZ = timezone(timedelta(hours=7))
 
-# Earlier turns sent to the model: enough for "explain point 2 further" or
-# "compare that with the other paper", small enough that a long conversation
-# doesn't crowd out the documents. Long answers are clipped — the model only
-# needs the gist of what it said, the documents are resent every turn anyway.
+# Earlier turns sent back to the model: enough for follow-ups, small enough
+# not to crowd out the documents (which are resent every turn anyway).
 HISTORY_MESSAGES = 10
 HISTORY_MESSAGE_MAX_CHARS = 4000
 # Shown in the UI when the chat panel opens.
@@ -70,9 +68,8 @@ def _save_exchange(project_id, user_id, chat_id, question, result):
 
 
 def get_history(project_id, user_id, chat_id=None):
-    """(messages, resolved_chat_id) for display — never breaks the page, an
-    unreadable history shows as empty. chat_id=None resolves to the most
-    recently used thread; (.., None) if this (project, user) has no thread yet."""
+    """(messages, resolved_chat_id) for display; empty on storage errors.
+    chat_id=None means the most recently used thread (None if there is none)."""
     if user_id is None:
         return [], None
     try:
@@ -88,8 +85,7 @@ def get_history(project_id, user_id, chat_id=None):
 
 
 def list_chat_threads(project_id, user_id):
-    """For the chat switcher: every past thread, newest-used first. Never
-    breaks the page — an unreadable list just shows as empty."""
+    """Threads for the chat switcher, newest first; empty on storage errors."""
     if user_id is None:
         return []
     try:
@@ -110,26 +106,22 @@ def delete_chat(project_id, user_id, chat_id):
 
 
 def _system_instruction(domain):
-    # The model has no clock: without this, "recent", "this year" or "how old
-    # is this study" are answered against its training cutoff.
+    # The model has no clock; give it today's date for "this year", "recent".
     today = datetime.now(_LOCAL_TZ)
     return f"{domain.system}\n\nHôm nay là ngày {today:%d/%m/%Y}."
 
 
 def _select_chunks(question, chunks, total_characters, domain, history, entities, relations):
-    """(numbered chunks for the prompt, full_text flag, {(document_id, chunk_index)}
-    of chunks added by graph expansion — used to mark those sources in the
-    answer as "found via the graph" instead of a direct keyword match)."""
+    """(chunks for the prompt, full_text flag, keys of chunks added by the
+    graph hop: shown as "via graph" in the sources)."""
     if total_characters <= domain.full_text_max_chars:
         return chunks, True, set()
-    # A follow-up ("explain that further") has almost no searchable words of
-    # its own; the previous question carries the topic.
+    # A follow-up ("explain that") has few words; the previous question
+    # carries the topic.
     previous = next((m.get("content") or "" for m in reversed(history) if m.get("role") == "user"), "")
     query = f"{previous}\n{question}" if previous else question
     ranked = rag.rank_chunks(query, chunks, domain.top_k, domain.min_relative_score)
-    # The real entity/relation graph (app/graph.py) wins whenever at least one
-    # selected document has one; expand_by_shared_terms is the fallback for
-    # documents extracted before the graph existed, or whose extraction failed.
+    # Entity graph when any selected document has one, else shared terms.
     if entities:
         expanded = rag.expand_by_entity_graph(query, ranked, chunks, entities, relations, domain.graph_expansion_max_chunks)
     else:
@@ -140,16 +132,13 @@ def _select_chunks(question, chunks, total_characters, domain, history, entities
 
 
 def ask_project(project_id, question, model=None, document_ids=None, user_id=None, chat_id=None):
-    """`user_id` None = stateless (no history read or written). `chat_id`
-    None/omitted = continue the most recently used thread (or start one if
-    this (project, user) has none yet) — the old single-thread behaviour, so
-    a caller that never thinks about threads at all still gets a continuous
-    conversation. To start a genuinely new thread instead (a project can
-    hold several — see app/repositories/chats.py), pass a chat_id nothing
-    has used yet; the UI does this by generating one client-side when
-    "+ Cuộc trò chuyện mới" is clicked (app/static/app.js). The resolved
-    chat_id always comes back in the result, so the caller can keep sending
-    it on the next question in the same thread."""
+    """Answer `question` from the project's ready documents.
+
+    user_id=None: stateless, no history read or written.
+    chat_id=None: continue the most recently used thread (or start one).
+    An unused chat_id starts a new thread (the UI generates one for
+    "+ Cuộc trò chuyện mới"). The resolved chat_id is returned in the result.
+    """
     documents_service.require_project(project_id)
     if user_id is not None and not chat_id:
         try:
@@ -165,8 +154,7 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
     if len(question) > MAX_QUESTION_LENGTH:
         raise HTTPException(422, f"Câu hỏi tối đa {MAX_QUESTION_LENGTH} ký tự")
 
-    # None = no filter (use every ready document); an explicit, possibly
-    # empty, list scopes the answer to just the checked sources.
+    # None = every ready document; a list = only the checked sources.
     selected = {str(d) for d in document_ids} if document_ids is not None else None
     if selected is not None and not selected:
         raise HTTPException(422, "Chọn ít nhất một tài liệu để hỏi.")
@@ -174,9 +162,7 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
     try:
         rows = repository.list_documents(project_id, 200, 0)
         documents = []
-        # Merged across every selected document, deduplicated: expand_by_entity_graph
-        # (app/rag.py) doesn't care which document an entity or relation came
-        # from, and a person/project mentioned in two documents should link them.
+        # Entity graphs of all selected documents, merged and deduplicated.
         entities, entity_seen, relations = [], set(), []
         for row in rows:
             if row["status"] != "ready":
@@ -203,8 +189,7 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
 
     domain = domains.current()
     chunks = rag.build_chunks(documents, domain.chunk_characters, domain.chunk_overlap)
-    # Selected but not readable yet (an image not analysed, a corrupt file):
-    # told to the person instead of being silently left out of the answer.
+    # Selected files without text yet are reported, not silently skipped.
     unread = [d["original_name"] for d in documents if not ((d.get("extracted_text") or {}).get("text") or "").strip()]
     if not chunks:
         raise HTTPException(
@@ -239,14 +224,11 @@ def ask_project(project_id, question, model=None, document_ids=None, user_id=Non
         "answer": answer,
         "model": model_used,
         "chat_id": chat_id,
-        # Only passages the answer cites: a list of everything sent (possibly
-        # the whole document in full-text mode) says nothing about the answer.
+        # Only the passages the answer cites.
         "sources": [
             {
                 "ref": number, "document_id": c["document_id"], "original_name": c["original_name"], "chunk_index": c["chunk_index"],
-                # Found through a graph hop (app/rag.py), not a direct keyword
-                # match on the question — surfaced in the UI so the graph's
-                # contribution is actually visible, not just a silent retrieval detail.
+                # Added by the graph hop rather than a keyword match.
                 "via_graph": (c["document_id"], c["chunk_index"]) in graph_keys,
             }
             for number, c in cited

@@ -1,7 +1,6 @@
-"""Accounts: login and session checks, self-service sign-up with email
-verification, password reset/change, and admin management. Two roles today
-(user, admin); `users.role` is a plain VARCHAR with a CHECK constraint (see
-app/bootstrap.py) so a future role only needs an additive constraint change.
+"""Accounts: login and per-request session check, sign-up with email
+verification, password reset/change, emailed re-auth for /admin/keys, and
+admin user management. Roles: user, admin.
 """
 import hashlib
 import logging
@@ -28,8 +27,7 @@ KEY_ACCESS_TOKEN_MINUTES = 15
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SIGNUP_SETTING = "signup_open"
 
-# Verified against when the username doesn't exist, so a wrong username takes
-# as long as a wrong password (no telling which usernames exist by timing).
+# Hashed against for unknown usernames, so timing doesn't reveal which exist.
 _DUMMY_HASH = auth.hash_password(secrets.token_hex(16))
 
 
@@ -64,10 +62,9 @@ def session_token(user):
 
 
 def session_user(session):
-    """Checks a signature-valid session against the database on every request:
-    the account must still exist, be active, and not have revoked this
-    session (session_version). Role and username come from the database, so
-    a demoted admin loses admin pages immediately, not when the cookie expires."""
+    """Per-request database check of a signed session: account exists, is
+    active and session_version matches. Role is read from the database, so a
+    demotion applies immediately."""
     try:
         row = repository.get_by_id(session["user_id"])
     except psycopg.Error as exc:
@@ -213,8 +210,8 @@ def dispatch(job):
 
 
 def _mail_later(user, subject, body, event):
-    """Sent in the background: answering only after a slow SMTP exchange when
-    an email matched would reveal, by timing, which emails have accounts."""
+    """Sends in the background so response time doesn't reveal whether the
+    email has an account."""
     def deliver():
         try:
             mailer.send(user["email"], subject, body)
@@ -300,11 +297,9 @@ def request_password_reset(email, base_url):
 
 
 def request_key_access(user_id, base_url):
-    """Emails a one-time confirmation link to the account's OWN address
-    before /admin/keys unlocks — see app/auth.py's key-access cookie. Unlike
-    the public reset-password flow this isn't trying to hide whether an
-    account exists (the caller is already a signed-in admin), so failures
-    are surfaced for real instead of staying silent."""
+    """Emails a one-time link to the admin's own verified address; opening it
+    unlocks /admin/keys for 15 minutes. Errors are reported (the caller is a
+    signed-in admin, nothing to hide)."""
     try:
         user = repository.get_by_id(user_id)
     except psycopg.Error as exc:
@@ -336,8 +331,8 @@ def request_key_access(user_id, base_url):
 
 
 def confirm_key_access(token):
-    """The user_id a valid key-access link belonged to — the caller sets
-    app/auth.py's cookie for it. Raises on an invalid/used/expired link."""
+    """user_id of a valid key-access link (caller sets the cookie); raises
+    400 for an invalid, used or expired link."""
     if not token:
         raise HTTPException(400, "Liên kết không hợp lệ")
     try:

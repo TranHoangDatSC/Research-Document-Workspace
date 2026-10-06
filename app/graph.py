@@ -1,19 +1,12 @@
-"""Entity/relation graph extraction: one LLM call per document, triggered by
-the explicit "Tạo đồ thị thực thể" button (services.documents.extract_entity_graph)
-— never automatically, since it costs API quota just like media analysis.
-Turns free text into a short list of named entities and (subject, relation,
-object) triples. Stored in MongoDB alongside `extracted_text` (see
-repositories.documents.update_entity_graph) and read back by
-rag.expand_by_entity_graph for graph-based retrieval (app/rag.py), and by
-merge_graphs below for the project-wide view (services.documents.project_entity_graph).
+"""Entity/relation graph of a document: one LLM call that turns extracted
+text into named entities and (subject, relation, object) triples.
 
-Best-effort only, by design: a document's extracted *text* is never blocked
-on this, and no caller needs to know whether it worked. If the model is
-unavailable, over quota, or returns something that doesn't parse as the
-expected JSON shape, the document just has no graph, and retrieval falls
-back to the zero-infrastructure rag.expand_by_shared_terms instead — see
-that function's docstring for why this one is a drop-in upgrade, not a
-separate code path callers have to choose between.
+Run only from the "Tạo đồ thị thực thể" button (it costs API quota). Stored
+in MongoDB next to `extracted_text`; used by rag.expand_by_entity_graph and,
+merged per project, by the graph page.
+
+Best-effort: on any LLM or parse failure the document simply has no graph
+and retrieval falls back to rag.expand_by_shared_terms.
 """
 import json
 import logging
@@ -23,14 +16,12 @@ from app import llm
 
 log = logging.getLogger("uvicorn.error")
 
-# Entities rarely need the whole document to be identified, and a shorter
-# prompt means a faster, cheaper call — this is one extra LLM call per
-# document, so it should stay light.
+# The start of a document is enough to find its entities; keeps the call cheap.
 MAX_INPUT_CHARACTERS = 20_000
 MAX_ENTITIES = 40
 MAX_RELATIONS = 40
 MAX_NAME_LENGTH = 200
-# Deterministic, not creative: this is data extraction, not prose.
+# Data extraction, not prose: deterministic.
 TEMPERATURE = 0.0
 
 _PROMPT = """Đọc đoạn văn bản tài liệu dưới đây. Liệt kê:
@@ -111,13 +102,9 @@ def extract_graph(text):
 
 
 def merge_graphs(graphs):
-    """Combines several documents' graphs into one: entities deduplicated by
-    exact name (first-seen order kept — the same person/project mentioned in
-    two documents becomes one node, which is the whole point of a *project*
-    graph instead of one isolated graph per document), relations
-    deduplicated by the exact (subject, relation, object) triple (the same
-    sentence often gets re-extracted near-verbatim when it appears in more
-    than one document)."""
+    """One graph from many: entities deduplicated by exact name (so a name in
+    two documents becomes one node), relations by exact triple. First-seen
+    order is kept."""
     entities, seen_entities = [], set()
     relations, seen_relations = [], set()
     for graph in graphs:

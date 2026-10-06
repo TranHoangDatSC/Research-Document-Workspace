@@ -1,4 +1,7 @@
-"""Upload/download orchestration; HTTP errors retained to preserve API behavior."""
+"""Document use cases: upload, list, download/preview, delete, text and graph
+extraction. Coordinates PostgreSQL (row + status), MongoDB (metadata, text)
+and MinIO (file); there is no cross-store transaction, so the order of
+writes and the compensation steps below matter."""
 
 import hashlib
 import io
@@ -70,8 +73,8 @@ def split_values(value):
 
 
 def compensate(document_id, object_name, object_attempted, mongo_attempted):
-    # Only used before the final SQL commit is attempted. Do not delete a possibly
-    # committed ready document if the result of that commit is unknown.
+    # Undo a failed upload. Only called before the final commit is attempted:
+    # a document whose commit outcome is unknown must not be deleted.
     if mongo_attempted:
         try:
             repository.delete_details(document_id)
@@ -151,7 +154,7 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
     reader = _HashingReader(file.file)
     object_attempted = mongo_attempted = finalizing = False
     try:
-        # Durable pending record makes interrupted uploads discoverable.
+        # Pending row first, so an interrupted upload is visible in PostgreSQL.
         repository.create_pending(document_id, project_id, filename, object_name, content_type, size)
         object_attempted = True
         minio_client().put_object(
@@ -173,17 +176,16 @@ def upload_document(project_id, file, tags="", authors="", custom_metadata="{}")
         row = repository.mark_ready(document_id)
     except Exception as exc:
         if finalizing:
-            # SQL COMMIT could have succeeded even if its acknowledgement was lost.
-            # Retain assets; operator can reconcile using the durable document ID.
+            # The commit may have succeeded with its reply lost: keep the
+            # file and metadata; reconcile by document id.
             log.error("finalization uncertain; retain assets id=%s", document_id)
         else:
             compensate(document_id, object_name, object_attempted, mongo_attempted)
         raise storage_error("upload", exc, document_id) from None
     log.info("document_uploaded document_id=%s project_id=%s kind=%s size_bytes=%s", document_id, project_id, kind.name, size)
-    # Read the text right away when it's local and cheap, so the AI can use
-    # the file at once. Images/audio/video wait for "Phân tích bằng AI": that
-    # costs API quota and sends the file to Google, so it's the user's call.
-    # A failure here never fails the upload — the button can retry it.
+    # Extract text now when it is local and cheap. Media waits for the
+    # "Phân tích bằng AI" button (costs quota, sends the file to Google).
+    # A failure here does not fail the upload; the button can retry.
     if not kind.needs_ai and size <= EXTRACT_MAX_BYTES:
         try:
             return extract_document(document_id)
@@ -480,14 +482,8 @@ def extract_document(document_id):
 
 
 def extract_entity_graph(document_id):
-    """"Tạo đồ thị thực thể" button: explicit, not automatic — like media's
-    "Phân tích bằng AI", this costs one LLM call, so it's the person's choice,
-    never something an upload or a text extraction triggers on its own (see
-    extract_document above, which only auto-runs the local/free parsers).
-    Needs extracted text first; failures are real errors here (unlike a
-    hypothetical automatic path, a person who clicked a button deserves to
-    know it didn't work), but an existing entity_graph is left untouched if
-    this fails, so a bad retry can't erase a previous good extraction."""
+    """"Tạo đồ thị thực thể" button (one LLM call, never automatic). Needs
+    extracted text. Errors are reported; a failed run keeps the old graph."""
     row = document_row(document_id)
     require_ready(row)
     try:
@@ -509,10 +505,7 @@ def extract_entity_graph(document_id):
 
 
 def project_entity_graph(project_id):
-    """Merged knowledge graph across every ready document in the project —
-    the same cross-document merge ask_project (app/services/rag.py) already
-    does for retrieval, surfaced here so a person can actually see what the
-    AI reasons across, not just the one document's graph at a time."""
+    """Entity graphs of every ready document in the project, merged."""
     require_project(project_id)
     try:
         rows = repository.list_all_documents(project_id)

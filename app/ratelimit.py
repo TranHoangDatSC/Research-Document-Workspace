@@ -1,9 +1,8 @@
-"""Small in-memory rate limiter for the public account forms (login, sign-up,
-forgot password): slows password guessing and stops one client from spamming
-sign-ups or reset emails.
+"""In-memory sliding-window rate limiter for account forms and AI questions.
 
-Per process: fine for this deployment (one uvicorn worker). With several
-workers or servers each keeps its own count — move this to Redis then.
+Counts live in this process: correct with one uvicorn worker only. With
+several workers or servers they must move to a shared store (Redis, see
+docs/ha-tang.md).
 """
 import threading
 import time
@@ -18,10 +17,7 @@ LIMITS = {
     "forgot-password": (5, 15 * 60),
     "reset-password": (10, 15 * 60),
     "verify-resend": (5, 15 * 60),
-    # Every ask costs an LLM call (quota/money, up to LLM_TIMEOUT_SECONDS per
-    # model x key attempted) and, once that provider is exhausted, one log
-    # line per failed attempt — unlike the forms above, nothing else stood
-    # between this endpoint and someone looping it.
+    # Each question costs LLM quota.
     "ask": (20, 5 * 60),
 }
 
@@ -30,9 +26,7 @@ _lock = threading.Lock()
 
 
 def client_ip(request):
-    """Behind Caddy (docker-compose.prod.yaml) every request comes from the
-    proxy, so use the address Caddy appended last to X-Forwarded-For; Caddy
-    replaces a client-supplied header unless trusted_proxies says otherwise."""
+    """Behind Caddy, the last X-Forwarded-For entry (added by Caddy)."""
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
         return forwarded.split(",")[-1].strip()
@@ -41,11 +35,7 @@ def client_ip(request):
 
 def check(bucket, request, user_id=None):
     """Counts this attempt; 429 once the bucket's limit is reached.
-
-    `user_id` buckets by account instead of IP — for an authenticated
-    endpoint, so one person behind a shared/NAT IP can't be throttled by
-    someone else's traffic, and switching IP doesn't reset their own count.
-    """
+    `user_id` counts per account instead of per IP (signed-in endpoints)."""
     limit, window = LIMITS[bucket]
     key = (bucket, user_id if user_id is not None else client_ip(request))
     now = time.monotonic()

@@ -1,4 +1,4 @@
-"""Shared project operations for JSON API and HTML forms."""
+"""Project use cases, shared by the JSON API and the HTML UI."""
 import logging
 import psycopg
 from fastapi import HTTPException
@@ -40,8 +40,7 @@ def update_project(project_id, payload):
     return row
 
 def delete_project(project_id):
-    # Import here, not at module level: services.documents doesn't import
-    # services.projects, but keeping the edge local avoids ever having to care.
+    # Local import keeps services.projects -> services.documents one-way.
     from app.services import documents as documents_service
 
     get_project(project_id)
@@ -53,8 +52,7 @@ def delete_project(project_id):
     try:
         chats_repository.delete_project(project_id)
     except Exception as exc:
-        # Orphaned chat messages are unreachable without the project; not
-        # worth blocking the delete over.
+        # Leftover chat messages are unreachable; don't block the delete.
         log.warning("chat_storage_failed stage=delete-project error=%s", type(exc).__name__)
     call(repository.delete_project, project_id, access.user_id())
     log.info("project_deleted project_id=%s document_count=%s", project_id, len(docs))

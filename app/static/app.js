@@ -13,9 +13,7 @@
     return null;
   }
 
-  // ----- tiny markdown renderer for AI answers (headings, bold/italic, lists,
-  // tables, hr, inline code) — the LLM replies in markdown, and showing it as
-  // literal asterisks/hashes is unreadable, so this renders it as real HTML. -----
+  // ----- tiny markdown renderer for AI answers (the LLM replies in markdown) -----
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -146,9 +144,7 @@
   });
 
   // ----- user menu dropdown (topbar) -----
-  // CSS :focus-within already opens this without JS (click/Tab into the
-  // button or panel keeps focus inside .user-menu); JS just adds click-to-
-  // toggle and click-outside-to-close on top of that baseline.
+  // CSS :focus-within opens it without JS; JS adds click toggle and click-outside close.
   var userMenuBtn = document.getElementById('user-menu-btn');
   var userMenu = userMenuBtn && userMenuBtn.closest('.user-menu');
   if (userMenu) {
@@ -356,10 +352,8 @@
   }
   initDocTabs(document);
 
-  // ----- entity graph: force-directed 2D network (plain SVG + a small
-  // hand-rolled physics loop, no charting library) with draggable nodes, on
-  // top of the always-rendered text list (data-graph-viz lives on that same
-  // element so the SVG is a pure enhancement — JS off still shows the list). -----
+  // ----- entity graph: force-directed SVG network with draggable nodes. Drawn
+  // over the text list, which stays visible without JS. -----
   function enhanceEntityGraphs(root) {
     if (!window.SVGElement) return;
     Array.prototype.forEach.call(root.querySelectorAll('[data-graph-viz]'), function (el) {
@@ -372,14 +366,11 @@
     });
   }
 
-  // Minimum gap kept between any two node circles (beyond their own radii),
-  // so a node's label never gets crowded by its neighbours.
+  // Minimum gap between node circles, so labels don't touch.
   var GRAPH_NODE_GAP = 14;
 
-  // Pure collision pass: pushes overlapping circles apart along the line
-  // between their centers, using each node's own radius — so a long name's
-  // bigger circle claims the room its label actually needs. `fixed`, if
-  // given, never moves itself (used while that one node is being dragged).
+  // Pushes overlapping circles apart along the line between centers.
+  // `fixed` (the node being dragged) never moves.
   function resolveGraphOverlaps(nodes, fixed, iterations) {
     for (var pass = 0; pass < iterations; pass++) {
       for (var i = 0; i < nodes.length; i++) {
@@ -404,8 +395,7 @@
     var width = Math.max(320, container.clientWidth || 600), height = 380;
     var nodes = entities.map(function (name, i) {
       var angle = (i / entities.length) * Math.PI * 2;
-      // Bigger circle for a longer name, so the label fits inside it and
-      // the collision pass below keeps long names from crowding each other.
+      // Radius grows with the name so the label fits inside.
       var r = Math.min(52, Math.max(24, 14 + name.length * 1.6));
       return { name: name, r: r, x: width / 2 + Math.cos(angle) * 90, y: height / 2 + Math.sin(angle) * 90, vx: 0, vy: 0 };
     });
@@ -420,9 +410,7 @@
       .filter(function (l) { return l.source && l.target && l.source !== l.target; });
     if (!links.length) return;
 
-    // Simple force layout: every pair repels, linked pairs spring toward a
-    // rest length, everything drifts gently back to center — settled once
-    // (not animated continuously), then nodes stay put until dragged.
+    // Force layout run once: pairs repel, linked pairs spring, all drift to center.
     var alpha = 1;
     for (var tick = 0; tick < 260; tick++) {
       for (var i = 0; i < nodes.length; i++) {
@@ -451,9 +439,7 @@
       });
       alpha *= 0.985;
     }
-    // The spring/repulsion forces above approximate spacing but don't
-    // guarantee it — a hard collision pass afterwards makes "no overlapping
-    // labels" an actual guarantee instead of a usually.
+    // Forces only approximate spacing; this pass guarantees no overlap.
     resolveGraphOverlaps(nodes, null, 40);
     nodes.forEach(clampNode);
 
@@ -512,11 +498,7 @@
     }
     draw();
 
-    // Drag to untangle a cluster: the dragged node follows the pointer
-    // exactly, and every other node that it would overlap gets pushed out
-    // of the way (resolveGraphOverlaps with `fixed` = this node) — dragging
-    // through a crowded cluster spreads it apart instead of stacking labels
-    // on top of each other.
+    // Dragged node follows the pointer; nodes it would overlap are pushed away.
     nodeEls.forEach(function (n) {
       var dragging = false, offsetX = 0, offsetY = 0;
       function toLocal(evt) {
@@ -560,9 +542,7 @@
       var button = form.querySelector('button');
       var label = button.querySelector('span');
       var pane = form.closest('[role="tabpanel"]');
-      // Scoped to the submitting form's own card, not the whole pane: a pane
-      // can hold more than one inline-extract form (text extraction and the
-      // entity-graph button both live in #pane-extract).
+      // Scoped to this form's card: #pane-extract holds more than one such form.
       var errorBox = (form.closest('.card') || pane).querySelector('.extract-error');
       button.disabled = true;
       label.textContent = form.getAttribute('data-busy-label') || 'Đang trích xuất…';
@@ -618,14 +598,8 @@
     });
     aiThread.scrollTop = aiThread.scrollHeight;
 
-    // "+ Cuộc trò chuyện mới": a project can hold several threads (see
-    // app/repositories/chats.py), so this never deletes anything — it blanks
-    // the panel and gives the form a brand new, message-less chat_id (so
-    // omitting chat_id elsewhere still means "continue my most recent
-    // thread" — only an id nothing has used yet starts a fresh one). The
-    // link (href="?chat_id=new") is the no-JS fallback: a full reload whose
-    // response (ui/routes.py's "new" sentinel) carries a server-generated id
-    // in the hidden field instead, since there's no client-side JS to make one.
+    // "+ Cuộc trò chuyện mới": clears the panel and sets a fresh chat_id; nothing
+    // is deleted. The href (?chat_id=new) is the no-JS fallback.
     var emptyTpl = document.getElementById('ai-empty-tpl');
     var newChatLink = document.getElementById('ai-new-chat');
     var chatIdInput = document.getElementById('ai-chat-id-input');
@@ -782,9 +756,7 @@
           .then(function (result) {
             if (result.ok) {
               renderAnswer(thinking, result.data);
-              // The first message of a new thread gets its chat_id generated
-              // server-side — capture it so the next question continues the
-              // same thread instead of starting yet another one.
+              // Keep the server-assigned chat_id so the next question stays in this thread.
               if (chatIdInput && result.data.chat_id) chatIdInput.value = result.data.chat_id;
             } else {
               renderError(thinking, (result.data && result.data.detail) || 'Có lỗi xảy ra, thử lại sau.');
@@ -993,9 +965,8 @@
     return result;
   }
   function attachMetadataEditor(metadataField) {
-    // A plain .field div now (not <label>): the field's own text label lives
-    // in a persistent sibling .field-head (with the (i) help popover) that
-    // this wrap never touches, so it stays visible in both raw and visual mode.
+    // A .field div, not <label>: the label and help popover live in a sibling
+    // .field-head that stays visible in both modes.
     var metadataLabel = metadataField.closest('.field');
     if (!metadataLabel || metadataField.kvAttached) return;
     metadataField.kvAttached = true;
@@ -1062,9 +1033,7 @@
     }
     toggleModeBtn.addEventListener('click', function () { setMode(!showingRaw); });
 
-    // For the draft saver: the value as currently on screen (the rows are only
-    // written back to the textarea on submit), and a way to redraw the rows
-    // after the textarea is changed from outside (draft restored / discarded).
+    // For the draft saver: current on-screen value, and a redraw hook.
     metadataField.kvValue = function () {
       return (!showingRaw && rootGroup) ? JSON.stringify(serializeKvGroup(rootGroup)) : metadataField.value;
     };
@@ -1165,10 +1134,8 @@
       applyValues(baseline);
       setNote(null);
     });
-    // Edit forms keep the draft through submit: if the server rejects it (422),
-    // nothing is lost, and once it IS saved the next open finds draft == stored
-    // values and drops it (below). An upload form always starts empty, so it
-    // can't tell — it opts in to clearing on submit instead.
+    // Edit forms keep the draft through submit (a 422 loses nothing); upload
+    // forms clear it on submit.
     var clearOnSubmit = form.hasAttribute('data-draft-clear-on-submit');
     form.addEventListener('submit', function () {
       clearTimeout(timer);
@@ -1191,10 +1158,8 @@
   Array.prototype.forEach.call(document.querySelectorAll('textarea[data-kv-metadata]'), attachMetadataEditor);
 
   // ----- open documents in the main panel (NotebookLM-style) -----
-  // A document picked in the sources sidebar replaces only the middle of the
-  // page: the sidebar (search, scroll position, AI checkboxes) and the AI chat
-  // stay put. The URL still changes (pushState), so Back/Forward, reload and
-  // "open in new tab" all work; without JS the links are ordinary pages.
+  // Only the middle panel is replaced; sidebar and chat stay. pushState keeps
+  // Back/Forward and reload working; without JS links are normal pages.
   var mainEl = document.getElementById('main');
   var sourceFilter = document.getElementById('source-filter');
   var canNavigateInPlace = !!(mainEl && document.getElementById('sources-panel') && window.fetch && window.DOMParser && window.history && history.pushState);
@@ -1259,9 +1224,8 @@
   }
 
   // ----- sources sidebar: search + kind filter, applied as you type -----
-  // Server-side (it must cover every page, not just the 20 on screen); the
-  // results block is swapped in place and the URL keeps ?q=&kind= so a reload
-  // or a document link keeps the same list. Without JS the form just submits.
+  // Server-side search over all pages; results swap in place and the URL keeps
+  // ?q=&kind=. Without JS the form submits.
   if (sourceFilter && window.fetch && window.DOMParser) {
     var results = document.getElementById('source-results');
     var searchInput = sourceFilter.querySelector('input[name="q"]');
@@ -1362,12 +1326,8 @@
     });
   }
 
-  // ----- entity graph modal: zoom a graph (one document's, or the whole
-  // project's merged one) into a much bigger dialog instead of a tab's
-  // cramped width. Two ways in: data-graph-expand points at a [data-graph-viz]
-  // element already on the page (no fetch, it just redraws that same data
-  // bigger); data-graph-modal-fetch fetches a whole page (project_graph.html)
-  // and pulls its graph element out, same plumbing as the other modals. -----
+  // ----- entity graph modal: redraw an on-page graph bigger (data-graph-expand)
+  // or fetch project_graph.html into a dialog (data-graph-modal-fetch). -----
   var graphModal = document.getElementById('graph-modal');
   if (graphModal && typeof graphModal.showModal === 'function') {
     var graphModalBody = document.getElementById('graph-modal-body');
@@ -1401,9 +1361,8 @@
     }
   }
 
-  // ----- upload options modal: moves the tags/authors/metadata fields out of the
-  // cramped sidebar popover into a roomy dialog. The <details> stays in the DOM as
-  // the no-JS fallback home for those fields; JS takes over as soon as it runs. -----
+  // ----- upload options modal: moves tags/authors/metadata into a dialog; the
+  // <details> stays as the no-JS fallback. -----
   var uploadModal = document.getElementById('upload-modal');
   var uploadMore = document.getElementById('upload-more');
   if (uploadModal && uploadMore && typeof uploadModal.showModal === 'function') {

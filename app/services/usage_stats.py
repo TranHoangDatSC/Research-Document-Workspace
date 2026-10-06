@@ -1,8 +1,6 @@
-"""Admin "Thống kê AI" page: turns the raw call log (app/repositories/usage.py)
-into the totals, per-model/source breakdown and time-bucketed chart the page
-shows. Pure functions over a plain list of dicts, deliberately kept out of
-the repository layer so this is trivial to unit test without a real or faked
-Mongo aggregation pipeline.
+"""Admin "Thống kê AI" page: totals, per-model/source breakdown and chart
+buckets computed from the raw call log (repositories/usage.py). Pure
+functions over a list of dicts, easy to unit test.
 """
 import logging
 from collections import OrderedDict
@@ -12,9 +10,7 @@ from app.repositories import usage as repository
 
 log = logging.getLogger("uvicorn.error")
 
-# range name -> (days of history, chart bucket size, label). The bucket is
-# coarser than the range so the chart stays readable: a year of per-day bars
-# would be unreadable, a day of per-month bars would be a single bar.
+# range -> days of history, chart bucket size, label.
 RANGES = OrderedDict([
     ("day", {"days": 1, "bucket": "hour", "label": "24 giờ qua"}),
     ("week", {"days": 7, "bucket": "day", "label": "7 ngày qua"}),
@@ -62,8 +58,7 @@ def _group_by(rows, field):
 
 
 def totals(rows):
-    """Grand totals plus the per-model and per-source breakdowns — the stat
-    cards and tables above the chart."""
+    """Grand totals plus per-model and per-source breakdowns."""
     result = _empty_totals()
     latencies = []
     for row in rows:
@@ -82,9 +77,7 @@ def totals(rows):
 
 
 def report(range_name):
-    """Everything the admin stats page needs for one range tab. Best-effort:
-    an unreadable call log shows as an all-zero report instead of breaking
-    the page — usage stats are a diagnostic, never load-bearing."""
+    """Data for one range tab. An unreadable log gives an all-zero report."""
     config = RANGES.get(range_name, RANGES[DEFAULT_RANGE])
     since = datetime.now(timezone.utc) - timedelta(days=config["days"])
     try:

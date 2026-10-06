@@ -43,12 +43,7 @@ class Domain:
     # Retrieval drops chunks scoring below this fraction of the best chunk's
     # score, so a weak one-word match doesn't pad the context with noise.
     min_relative_score: float
-    # After BM25 picks the top_k chunks, pull in up to this many more that
-    # share a rare term (a name, a project title) with one of them — a
-    # graph-lite hop that catches multi-hop questions BM25 alone misses
-    # (see rag.expand_by_shared_terms). 0 disables it. Defaulted here (not
-    # just in _load below) so existing direct Domain(...) construction —
-    # tests, mainly — doesn't have to know about it.
+    # Extra chunks the graph hop may add after BM25 (rag.expand_by_*); 0 = off.
     graph_expansion_max_chunks: int = 2
 
 
@@ -105,10 +100,7 @@ def current() -> Domain:
 
 
 def available():
-    """[(name, label), ...] for every domain folder with a system.md —
-    populates the persona dropdown on /admin/settings. A folder kept out of
-    Git (like "novel", see this module's docstring) simply doesn't appear
-    on a checkout that doesn't have it."""
+    """[(name, label)] of every folder with a system.md, for /admin/settings."""
     result = []
     for folder in sorted(_DOMAINS_DIR.iterdir()):
         if folder.is_dir() and (folder / "system.md").exists():

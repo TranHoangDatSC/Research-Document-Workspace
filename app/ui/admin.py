@@ -120,9 +120,7 @@ def update_settings(request: Request, key: Annotated[str, Form(max_length=50)], 
     current_user = require_admin(request)
     if key not in app_settings.KEYS:
         raise HTTPException(422, "Cấu hình không hợp lệ")
-    # A secret field left blank on submit means "no change" (the current
-    # value is never sent back to the browser to begin with — see masked()
-    # in app/settings.py — so an empty submit must not be read as "clear it").
+    # Secret fields are never pre-filled, so blank means "no change".
     if key in app_settings.SECRET_KEYS and not value.strip():
         return RedirectResponse("/admin/settings", status_code=303)
     app_settings.update(key, value, current_user["user_id"])
@@ -148,8 +146,7 @@ def request_keys_access(request: Request):
 
 @router.get("/keys/confirm")
 def confirm_keys_access(request: Request, token: Annotated[str, Query()] = ""):
-    # Admin-only page behind it, but the link itself needs no prior login —
-    # it IS the credential, exactly like the password-reset link.
+    # The emailed token is the credential, like a password-reset link.
     user_id = service.confirm_key_access(token)
     response = RedirectResponse("/admin/keys", status_code=303)
     response.set_cookie(

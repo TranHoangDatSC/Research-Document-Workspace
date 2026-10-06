@@ -1,19 +1,11 @@
-"""Technical/AI settings an admin can change from /admin/settings without a
-redeploy — same mechanism app/services/auth.py already uses for the sign-up
-toggle (the app_settings Postgres table, get_setting/set_setting), just with
-more keys.
+"""Technical/AI settings an admin edits at /admin/settings without a redeploy.
 
-Every reader of these — app/llm.py, app/domains/, app/media_ai.py — keeps
-reading plain os.environ exactly as before; nothing there changes. Instead,
-saving a setting here does two things: persists it to Postgres (survives a
-restart) and writes it into this process's os.environ right away (takes
-effect on the very next request, no restart needed). Clearing a setting
-restores exactly the value this process started with — captured once, below,
-before any admin override can have run.
+Saving a value stores it in the Postgres `app_settings` table (survives a
+restart) and writes it into os.environ (next request sees it). Readers
+(llm.py, media_ai.py, domains/) just read os.environ. Clearing a value
+restores what .env gave this process at startup.
 
-Single uvicorn worker only (see app/ratelimit.py's docstring for the same
-caveat): with several workers or replicas, each process keeps its own
-os.environ and would need apply_saved_overrides() called in it.
+Assumes one uvicorn worker: each extra worker/replica has its own os.environ.
 """
 import logging
 import os
@@ -25,25 +17,20 @@ from app.repositories import users as repository
 
 log = logging.getLogger("uvicorn.error")
 
-# Every setting this page can edit, and whether its value is a secret that
-# must never be sent back to the browser once saved.
+# Editable keys; SECRET_KEYS are never sent back to the browser.
 KEYS = (
     "LLM_PROVIDER", "LLM_MODEL", "LLM_MODELS", "LLM_API_KEY", "LLM_API_KEYS", "LLM_BASE_URL",
     "LLM_TIMEOUT_SECONDS", "LLM_THINKING_BUDGET", "APP_DOMAIN", "AI_MEDIA_ANALYSIS",
 )
 SECRET_KEYS = {"LLM_API_KEY", "LLM_API_KEYS"}
 
-# What each of these was when this process started, straight from the
-# container's .env (via docker-compose's env_file=) — read once at import,
-# before any admin override can run.
+# Values from .env at import time, before any override is applied.
 _ORIGINAL_ENV = {key: os.environ.get(key) for key in KEYS}
 
 
 def apply_saved_overrides():
-    """Called once at server startup (app/main.py lifespan): pulls every
-    admin-saved override out of Postgres into os.environ. Never raises — a
-    database that isn't ready yet just means this boots on .env alone, the
-    same as before this module existed."""
+    """Startup hook (main.py lifespan): copy saved overrides into os.environ.
+    Never raises; if Postgres is unreachable the app runs on .env alone."""
     for key in KEYS:
         try:
             value = repository.get_setting(key)
@@ -55,15 +42,12 @@ def apply_saved_overrides():
 
 
 def effective(key):
-    """What's actually in os.environ right now — exactly what llm.py,
-    app/domains/ and media_ai.py already see when they read it themselves."""
+    """Current value, as llm.py/media_ai.py/domains/ see it."""
     return os.environ.get(key, "")
 
 
 def is_overridden(key):
-    """Whether an admin changed this from the UI, as opposed to it still
-    being whatever .env set at startup — shown next to the field so nobody
-    has to guess where the current value is coming from."""
+    """True when the value differs from .env (shown next to the field)."""
     return effective(key) != (_ORIGINAL_ENV.get(key) or "")
 
 
@@ -89,9 +73,7 @@ def update(key, value, admin_id):
 
 
 def masked(key):
-    """A safe-to-render stand-in for a secret's current value — never the
-    real thing, and never even its length for a list (that narrows down how
-    many keys are configured more than a viewer needs to know)."""
+    """Display-safe stand-in for a secret: last 4 chars, or a key count."""
     value = effective(key)
     if not value:
         return None
@@ -101,11 +83,9 @@ def masked(key):
     return "••••" + value[-4:] if len(value) > 4 else "••••"
 
 
-# ----- API key CRUD (/admin/keys, gated behind the emailed re-auth link —
-# app/services/auth.py's request_key_access/confirm_key_access and
-# app/auth.py's key-access cookie). LLM_API_KEYS is the one list these
-# operate on; LLM_API_KEY (singular) stays as a plain .env-only fallback for
-# a simple one-key setup and isn't editable from this page. -----
+# ----- API key list (/admin/keys, unlocked by an emailed link: see
+# services/auth.request_key_access). Edits LLM_API_KEYS only; the single
+# LLM_API_KEY stays a .env-only fallback. -----
 
 def _mask_one(value):
     return ("••••" + value[-4:]) if len(value) > 4 else "••••"

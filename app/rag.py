@@ -1,29 +1,18 @@
-"""Retrieval over already-extracted document text (Day 5's `extracted_text`).
-No embeddings, no vector DB — two pure-Python strategies, picked per question
-by app/services/rag.py:
+"""Retrieval over extracted document text. Pure Python: no embeddings, no
+vector DB. services/rag.py picks one of two modes per question:
 
-- full text: when the selected documents are small enough (domain setting
-  `full_text_max_chars`), every chunk goes to the model. With a handful of
-  short research documents this beats any ranking — nothing relevant can be
-  missed.
-- BM25: otherwise, chunks are ranked with Okapi BM25 over diacritic-folded
-  tokens (Vietnamese stopwords removed) plus adjacent-syllable bigrams, since
-  Vietnamese words are mostly two syllables ("học sinh", "chính trị") and a
-  bag of single syllables loses that. One graph-shaped hop is then added on
-  top of the BM25 hits, pulling in chunks connected to them even without
-  matching the question's own words:
-    - `expand_by_entity_graph`, when at least one selected document has an
-      entity/relation graph (app/graph.py: one LLM call per document, made at
-      extraction time, see services/documents.py) — walks real named
-      entities and relations.
-    - `expand_by_shared_terms` otherwise (documents extracted before the
-      graph existed, or whose extraction failed) — the same one-hop walk
-      over a rare shared BM25 term (a name, a project title) instead, so
-      retrieval never regresses to plain BM25 just because the graph step
-      didn't run.
+- Full text: small selections (<= domain `full_text_max_chars`) are sent
+  whole, so nothing relevant can be missed.
+- BM25: otherwise chunks are ranked by Okapi BM25 over diacritic-folded
+  syllables plus adjacent-syllable bigrams (most Vietnamese words are two
+  syllables). Then one graph hop adds related chunks that don't share the
+  question's words:
+    - expand_by_entity_graph when a document has an LLM-built entity graph
+      (app/graph.py);
+    - expand_by_shared_terms otherwise, using rare shared terms as edges.
 
-Chunks are numbered [1]..[n] in the prompt; the model cites those numbers and
-`cited_chunks` maps them back, so the sources shown are the ones actually used.
+Chunks are numbered [1]..[n] in the prompt; `cited_chunks` maps the model's
+citations back so only the sources actually used are shown.
 """
 import math
 import re
@@ -40,8 +29,7 @@ _PARAGRAPH_RE = re.compile(r"\n\s*\n")
 _SENTENCE_RE = re.compile(r"(?<=[.!?…;:])\s+")
 _CITATION_RE = re.compile(r"\[(\d+(?:\s*[,;–-]\s*\d+)*)\]")
 
-# Diacritic-folded (see _fold): "của" -> "cua". Function words only — anything
-# that could be a content word in some context stays searchable.
+# Diacritic-folded (see _fold). Function words only.
 _STOPWORDS = frozenset("""
 va la cua cac nhung mot nhu cho voi trong thi ma co duoc nay do de khi tu tai
 ve se da dang bi boi hay hoac nen vi ra len vao cung rat lai con theo nao gi
@@ -175,12 +163,8 @@ def _chunk_key(chunk):
 
 
 def _rare_terms(term_lists, max_chunk_fraction=0.3, max_chunks=3):
-    """Terms present in only a few chunks. In a small corpus a word repeated
-    everywhere ("nghiên cứu", "dữ liệu"...) says nothing about which chunks
-    belong together, but a name, a project title or a place that recurs in
-    just a couple of chunks is a real signal connecting them — the same
-    intuition behind TF-IDF/BM25's own idf term, reused here as a graph edge
-    filter instead of a ranking weight."""
+    """Terms found in only a few chunks: a recurring name or title links
+    chunks, a word that appears everywhere does not (the idea behind idf)."""
     total = len(term_lists)
     if not total:
         return set()
@@ -192,19 +176,10 @@ def _rare_terms(term_lists, max_chunk_fraction=0.3, max_chunks=3):
 
 
 def expand_by_shared_terms(selected, chunks, max_extra=2):
-    """Graph-lite retrieval augmentation: no entities, no embeddings, no extra
-    LLM call — just the existing BM25 term index read as an implicit graph (a
-    rare term is an edge; a chunk is a node) and walked one hop out from the
-    chunks BM25 already selected. Pulls in chunks that share a specific
-    name/title/place with a selected chunk even when they share no words
-    with the QUESTION itself — the multi-hop case plain keyword overlap
-    misses ("tài liệu nào liên quan đến đề tài do X hướng dẫn?" when the
-    connecting chunk never mentions X, only the shared project name does).
-
-    Superseded per-project by expand_by_entity_graph below whenever at least
-    one of a project's documents actually has an extracted entity graph —
-    see services.rag._select_chunks. This one stays as the fallback for
-    documents extracted before the graph existed, or when extraction failed.
+    """One hop over an implicit graph (chunk = node, rare shared term = edge)
+    from the chunks BM25 selected. Adds up to `max_extra` chunks that share a
+    name or title with a selected chunk but not with the question.
+    Fallback when no document has an entity graph; no LLM call needed.
     """
     if not selected or max_extra <= 0 or len(selected) >= len(chunks):
         return selected
@@ -235,24 +210,15 @@ def expand_by_shared_terms(selected, chunks, max_extra=2):
 
 
 def expand_by_entity_graph(question, selected, chunks, entities, relations, max_extra=2):
-    """Real graph-RAG hop, using the entity/relation graph extracted once per
-    document by the LLM (app/graph.py) instead of expand_by_shared_terms'
-    rare-BM25-term guess. Two things it can do that term-sharing can't:
+    """One hop over the LLM-built entity graph (app/graph.py).
 
-    - Anchor on the QUESTION itself, not just the chunks BM25 already picked.
-      A question can name an entity ("ai hướng dẫn Lê Mộng Tiên?") that never
-      appears verbatim in any single high-scoring chunk, so BM25 alone may
-      not surface the chunk that answers it; a direct entity mention does.
-    - Cross a *relation*, not just a shared mention. Chunk A says "Lê Mộng
-      Tiên — hướng dẫn: ThS. Khiết"; chunk B, in a different document, talks
-      only about "ThS. Khiết" and never repeats Tiên's name or any other
-      word from A. expand_by_shared_terms finds nothing in common between
-      them; a stored relation (Tiên, "hướng dẫn bởi", Khiết) links them
-      directly.
+    Entities named in the question or in the selected chunks are "active";
+    a relation also activates the entity at its other end. Unselected chunks
+    mentioning the most active entities are added (up to `max_extra`). This
+    links chunk A ("X, hướng dẫn: Y") to chunk B (only about Y) even when
+    they share no other word.
 
-    `entities`/`relations` are the project's documents' graphs, already
-    merged and deduplicated by the caller (services.rag.ask_project) — this
-    function doesn't care which document an entity came from.
+    `entities`/`relations`: the selected documents' graphs, already merged.
     """
     if max_extra <= 0 or len(selected) >= len(chunks) or not entities:
         return selected
@@ -269,9 +235,7 @@ def expand_by_entity_graph(question, selected, chunks, entities, relations, max_
         if hits:
             mentions[name] = hits
 
-    # A relation "activates" both ends together: a question or chunk about
-    # one side makes the other side's chunks relevant too, even with zero
-    # shared vocabulary between them.
+    # A relation links both ends: activating one side activates the other.
     linked = {name: set() for name in folded_names}
     for rel in relations or ():
         subject, obj = (rel or {}).get("subject"), (rel or {}).get("object")
