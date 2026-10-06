@@ -1,13 +1,14 @@
+"""Projects (PostgreSQL)."""
 from uuid import uuid4
 
 from psycopg.rows import dict_row
 
+from app.repositories import escape_like
 from app.storage import postgres_connection
 
 FIELDS = "id, name, description, created_at"
 
-# Every read is scoped to the owner: a project of another user behaves exactly
-# like a project that doesn't exist (404), so ids can't be probed.
+# Every query is scoped to the owner: another user's project looks missing.
 
 
 def create_project(payload, owner_id):
@@ -26,9 +27,9 @@ def list_projects(limit, offset, query=None, owner_id=None):
         with connection.cursor(row_factory=dict_row) as cursor:
             if query:
                 cursor.execute(
-                    f"SELECT {FIELDS} FROM projects WHERE owner_id = %s AND name ILIKE %s "
+                    f"SELECT {FIELDS} FROM projects WHERE owner_id = %s AND name ILIKE %s ESCAPE '\\' "
                     "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
-                    (owner_id, f"%{query}%", limit, offset),
+                    (owner_id, f"%{escape_like(query)}%", limit, offset),
                 )
             else:
                 cursor.execute(
@@ -43,7 +44,10 @@ def count_projects(query=None, owner_id=None):
     with postgres_connection() as connection:
         with connection.cursor() as cursor:
             if query:
-                cursor.execute("SELECT count(*) FROM projects WHERE owner_id = %s AND name ILIKE %s", (owner_id, f"%{query}%"))
+                cursor.execute(
+                    "SELECT count(*) FROM projects WHERE owner_id = %s AND name ILIKE %s ESCAPE '\\'",
+                    (owner_id, f"%{escape_like(query)}%"),
+                )
             else:
                 cursor.execute("SELECT count(*) FROM projects WHERE owner_id = %s", (owner_id,))
             return cursor.fetchone()[0]

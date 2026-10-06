@@ -182,8 +182,8 @@ class SearchAndFilterTests(DocumentTestCase):
         self.assertEqual(self.client.get(f"/projects/{self.project_id}/documents", params={"kind": "spaceship"}).status_code, 422)
 
     def test_like_wildcards_in_the_query_are_literal(self):
-        from app.repositories.documents import _escape_like
-        self.assertEqual(_escape_like("100%_done\\"), "100\\%\\_done\\\\")
+        from app.repositories import escape_like
+        self.assertEqual(escape_like("100%_done\\"), "100\\%\\_done\\\\")
 
     def test_sidebar_shows_filtered_list_and_keeps_it_on_links(self):
         html = self.client.get(f"/ui/projects/{self.project_id}", params={"q": "forecast", "kind": "image"}).text

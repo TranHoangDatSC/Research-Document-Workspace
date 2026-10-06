@@ -1,7 +1,9 @@
+"""Accounts, one-time tokens and app settings (PostgreSQL)."""
 from uuid import uuid4
 
 from psycopg.rows import dict_row
 
+from app.repositories import escape_like
 from app.storage import postgres_connection
 
 FIELDS = "id, username, email, email_verified, role, is_active, session_version, created_at"
@@ -48,17 +50,12 @@ def get_by_id(user_id, with_password=False):
             return cursor.fetchone()
 
 
-def _escape_like(text):
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def list_users(limit=None, offset=0, query=None):
-    """`limit=None` returns every user (tests and anything that still wants
-    the whole list); the admin page passes a real limit/offset to paginate."""
+    """`limit=None` returns every user; the admin page paginates."""
     where, params = [], []
     if query:
         where.append("username ILIKE %s ESCAPE '\\'")
-        params.append(f"%{_escape_like(query)}%")
+        params.append(f"%{escape_like(query)}%")
     clause = f"WHERE {' AND '.join(where)} " if where else ""
     sql = f"SELECT {FIELDS} FROM users {clause}ORDER BY created_at"
     if limit is not None:
@@ -74,16 +71,14 @@ def count_users(query=None):
     where, params = [], []
     if query:
         where.append("username ILIKE %s ESCAPE '\\'")
-        params.append(f"%{_escape_like(query)}%")
+        params.append(f"%{escape_like(query)}%")
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     with postgres_connection() as connection:
         return connection.execute(f"SELECT count(*) FROM users {clause}", params).fetchone()[0]
 
 
 def user_stats():
-    """Totals for the admin dashboard's stat row — always over every account,
-    never scoped to the current page or search, so it reads the same no
-    matter which page an admin happens to be looking at."""
+    """Totals over all accounts (not the current page/search)."""
     with postgres_connection() as connection:
         row = connection.execute(
             "SELECT count(*), count(*) FILTER (WHERE is_active), count(*) FILTER (WHERE role = 'admin') FROM users"

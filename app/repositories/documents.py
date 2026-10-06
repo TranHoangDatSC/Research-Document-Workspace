@@ -1,7 +1,10 @@
+"""Document storage: fixed fields in PostgreSQL (`documents`), flexible
+metadata, extracted text and entity graph in MongoDB (`document_details`)."""
 import os
 
 from psycopg.rows import dict_row
 
+from app.repositories import escape_like
 from app.storage import postgres_connection, mongo_client
 
 FIELDS = "id, project_id, original_name, object_name, content_type, size_bytes, status, created_at"
@@ -56,15 +59,11 @@ def mark_failed(document_id):
         )
 
 
-def _escape_like(text):
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def _document_filters(project_id, query, extensions):
     where, params = ["project_id = %s"], [project_id]
     if query:
         where.append("original_name ILIKE %s ESCAPE '\\'")
-        params.append(f"%{_escape_like(query)}%")
+        params.append(f"%{escape_like(query)}%")
     if extensions:
         where.append("object_name LIKE ANY(%s)")
         params.append([f"%{ext}" for ext in extensions])
@@ -156,8 +155,8 @@ def update_details(document_id, tags, authors, custom_metadata):
 
 
 def begin_delete(document_id):
-    # One atomic UPDATE commits intent before any external deletion. Pending
-    # uploads cannot be deleted while their writer is still finishing.
+    # Records the intent to delete before touching MinIO/MongoDB. Pending
+    # uploads are excluded: their writer is still running.
     return sql_one(
         f"UPDATE documents SET status='deleting' "
         f"WHERE id=%s AND status IN ('ready', 'failed', 'deleting') RETURNING {FIELDS}",

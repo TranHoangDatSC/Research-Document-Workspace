@@ -1,7 +1,6 @@
-"""Chat history in MongoDB (`chat_messages`): a project can hold several
-conversation threads per user, told apart by `chat_id`. Flexible, append-only
-records with a nested `sources` list — the same reason document metadata
-lives in MongoDB rather than PostgreSQL.
+"""Chat history in MongoDB (`chat_messages`). Each (project, user) can have
+several threads, told apart by `chat_id`. Append-only records with a nested
+`sources` list, which is why they live in MongoDB.
 """
 import os
 from datetime import datetime, timezone
@@ -9,10 +8,8 @@ from datetime import datetime, timezone
 from app.storage import mongo_client
 
 COLLECTION = "chat_messages"
-# list_chats only needs to tell threads apart and preview each one — scanning
-# the most recent few hundred messages is enough for what's meant to be a
-# handful of threads per project, and avoids a Mongo aggregation pipeline
-# (nothing else in this codebase uses one) for something this small.
+# list_chats scans this many recent messages instead of running an
+# aggregation pipeline; enough for a handful of threads per project.
 THREAD_SCAN_LIMIT = 500
 
 
@@ -65,9 +62,8 @@ def list_chats(project_id, user_id):
                 continue
             entry = threads.setdefault(chat_id, {"chat_id": chat_id, "preview": None, "updated_at": m["created_at"]})
             if m.get("role") == "user":
-                # Overwritten on every older user message of this thread we
-                # visit next; the last write (the thread's first question)
-                # is what's left once the scan finishes.
+                # Scan goes newest -> oldest, so the last write is the
+                # thread's first question.
                 entry["preview"] = m["content"][:140]
         return sorted(threads.values(), key=lambda t: t["updated_at"], reverse=True)
 

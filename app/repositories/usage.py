@@ -1,12 +1,6 @@
-"""Raw LLM call log: one row per (key, model) attempt made in llm.ask() or
-media_ai.analyze(), success or failure — a failed attempt still counts,
-since a page full of 429/503 is exactly the "quota exhausted" signal the
-admin stats page (app/services/usage_stats.py) exists to surface.
-
-Collection: llm_usage. Aggregation (by day/week/month/year, by model, totals)
-is done in plain Python over the list this returns, not a Mongo pipeline —
-small, self-hosted scale, and far easier to unit test without a real or
-faked aggregation engine.
+"""LLM call log in MongoDB (`llm_usage`): one row per (key, model) attempt,
+failed ones included, since repeated 429/503 is the "quota exhausted" signal.
+Totals are computed in Python by services/usage_stats.py.
 """
 import os
 from datetime import datetime, timezone
@@ -17,9 +11,7 @@ COLLECTION = "llm_usage"
 
 
 def record(source, provider, model, ok, latency_ms, usage=None, error=None):
-    """`source`: "ask" | "graph" | "media_ai" — which feature made the call,
-    so the stats page can break down usage by *why* quota is being spent,
-    not just by model."""
+    """`source`: "ask" | "graph" | "media_ai", the feature that made the call."""
     doc = {
         "created_at": datetime.now(timezone.utc),
         "source": source,
