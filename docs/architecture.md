@@ -16,17 +16,24 @@ PostgreSQL và MongoDB chỉ truy cập được trong network Compose.
 
 ## Các lớp trong `app/`
 
+Luồng phụ thuộc một chiều: `api/`, `ui/` → `services/` → `repositories/` → `storage.py`.
+
 | Lớp | Trách nhiệm |
 | --- | --- |
-| `api/` | Path, method, validate query/path, mã HTTP |
+| `main.py` | Tạo app, gắn router, 3 middleware (header bảo mật, đăng nhập, chống CSRF form) |
+| `api/` | API JSON: path, method, validate query/path, mã HTTP |
+| `ui/` | Trang HTML (Jinja2) và trang quản trị; gọi thẳng `services/`, không gọi lại API qua HTTP |
 | `schemas/` | Pydantic model của project |
-| `services/documents.py` | Validate file, thứ tự ghi 3 storage, dọn dẹp khi lỗi |
+| `services/` | Nghiệp vụ: `documents` (thứ tự ghi 3 storage, dọn dẹp khi lỗi), `projects`, `auth` (tài khoản, phiên, email), `rag` (hỏi đáp), `usage_stats` |
 | `repositories/` | Câu lệnh SQL và MongoDB; mỗi hàm một kết nối/transaction |
 | `storage.py` | Tạo client, timeout 3 giây, host cố định theo tên service Compose |
 | `bootstrap.py` | Tạo bảng/index/bucket (idempotent) và các hàm kiểm tra dùng cho `/health/ready` |
+| `access.py` | Người dùng của request hiện tại (ContextVar); service dùng để lọc dữ liệu theo chủ sở hữu |
+| Module thuần | `auth.py` (băm mật khẩu, ký cookie), `extractors.py`, `rag.py`, `graph.py`, `file_types.py`: không truy cập kho dữ liệu |
+| Gọi ra ngoài | `llm.py`, `media_ai.py` (Gemini/OpenAI), `mailer.py` (SMTP) |
+| `settings.py`, `ratelimit.py` | Cấu hình runtime và rate limit, giữ trong bộ nhớ tiến trình |
 
-Project đơn giản nên `api/projects.py` gọi thẳng repository. Chưa dùng ORM nên
-không có `models/`; schema DB nằm trong `bootstrap.py` (chưa có migration).
+Chưa dùng ORM nên không có `models/`; schema DB nằm trong `bootstrap.py` (chưa có migration).
 
 ## Khởi động
 
@@ -53,4 +60,8 @@ tiết từng bước: [day-06-huong-dan-trien-khai-vps.docx](day-06-huong-dan-t
 ## Giới hạn đã biết
 
 - Upload ghi 3 storage **không** phải transaction phân tán; xem [api.md](api.md#ghi-và-lỗi-giữa-chừng).
-- Chưa có xác thực, chưa có migration schema, chỉ lọc file theo đuôi.
+- Chưa có migration schema, chỉ lọc file theo đuôi.
+- Rate limit và cấu hình runtime nằm trong bộ nhớ tiến trình: chỉ chạy 1 worker.
+
+Toàn bộ phần hạ tầng (service, cổng, volume, bí mật, VPS, sao lưu, kế hoạch
+Redis): [ha-tang.md](ha-tang.md).
