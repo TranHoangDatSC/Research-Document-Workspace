@@ -31,13 +31,13 @@ Luồng phụ thuộc một chiều: `api/`, `ui/` → `services/` → `reposito
 | `access.py` | Người dùng của request hiện tại (ContextVar); service dùng để lọc dữ liệu theo chủ sở hữu |
 | Module thuần | `auth.py` (băm mật khẩu, ký cookie), `extractors.py`, `rag.py`, `graph.py`, `file_types.py`: không truy cập kho dữ liệu |
 | Gọi ra ngoài | `llm.py`, `media_ai.py` (Gemini/OpenAI), `mailer.py` (SMTP) |
-| `settings.py`, `ratelimit.py` | Cấu hình runtime và rate limit, giữ trong bộ nhớ tiến trình |
+| `settings.py`, `ratelimit.py` | Cấu hình runtime (bộ nhớ tiến trình) và rate limit (Redis, dự phòng bộ nhớ) |
 
 Chưa dùng ORM nên không có `models/`; schema DB nằm trong `bootstrap.py` (chưa có migration).
 
 ## Khởi động
 
-1. Compose chờ PostgreSQL, MongoDB, MinIO `healthy`.
+1. Compose chờ PostgreSQL, MongoDB, MinIO, Redis `healthy`.
 2. `web` chạy `python -m app.bootstrap` (thử lại 5 lần), rồi mới chạy uvicorn.
 3. Healthcheck của `web` gọi `/health/ready`: chỉ `healthy` khi cả 3 storage
    phản hồi và đủ bảng/index/bucket.
@@ -61,7 +61,7 @@ tiết từng bước: [day-06-huong-dan-trien-khai-vps.docx](day-06-huong-dan-t
 
 - Upload ghi 3 storage **không** phải transaction phân tán; xem [api.md](api.md#ghi-và-lỗi-giữa-chừng).
 - Chưa có migration schema, chỉ lọc file theo đuôi.
-- Rate limit và cấu hình runtime nằm trong bộ nhớ tiến trình: chỉ chạy 1 worker.
+- Cấu hình runtime nằm trong bộ nhớ tiến trình: chỉ chạy 1 worker.
 
-Toàn bộ phần hạ tầng (service, cổng, volume, bí mật, VPS, sao lưu, kế hoạch
-Redis): [ha-tang.md](ha-tang.md).
+Toàn bộ phần hạ tầng (service, cổng, volume, bí mật, VPS, sao lưu,
+Redis): [infrastructure.md](infrastructure.md).

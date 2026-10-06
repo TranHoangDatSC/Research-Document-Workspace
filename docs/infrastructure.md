@@ -2,8 +2,7 @@
 
 Tài liệu này gom toàn bộ phần hạ tầng của Research Document Workspace vào một
 chỗ: container nào chạy, cổng nào mở, dữ liệu nằm ở đâu, bí mật truyền vào
-bằng cách nào, triển khai VPS ra sao, sao lưu/khôi phục thế nào, và kế hoạch
-bổ sung Redis. Kiến trúc mã nguồn bên trong `app/` xem [architecture.md](architecture.md).
+bằng cách nào, triển khai VPS ra sao, sao lưu/khôi phục thế nào, và Redis. Kiến trúc mã nguồn bên trong `app/` xem [architecture.md](architecture.md).
 
 Mục lục:
 
@@ -19,7 +18,7 @@ Mục lục:
 10. [Sao lưu và khôi phục](#10-sao-lưu-và-khôi-phục)
 11. [Dịch vụ bên ngoài](#11-dịch-vụ-bên-ngoài)
 12. [Giới hạn hiện tại](#12-giới-hạn-hiện-tại)
-13. [Kế hoạch bổ sung Redis](#13-kế-hoạch-bổ-sung-redis)
+13. [Redis](#13-redis)
 14. [Tệp hạ tầng trong repo](#14-tệp-hạ-tầng-trong-repo)
 
 ---
@@ -27,7 +26,7 @@ Mục lục:
 ## 1. Tổng quan
 
 Ứng dụng là **một monolith FastAPI** (một container `web`, một tiến trình
-uvicorn) cùng ba dịch vụ lưu trữ, tất cả chạy bằng Docker Compose. Trên VPS có
+uvicorn) cùng ba dịch vụ lưu trữ và Redis, tất cả chạy bằng Docker Compose. Trên VPS có
 thêm Caddy làm reverse proxy và HTTPS.
 
 ```
@@ -38,8 +37,9 @@ thêm Caddy làm reverse proxy và HTTPS.
                      └─────┬─────┘
                            │ http://web:8000   (mạng nội bộ Compose)
 ┌──────────────────────────▼──────────────────────────────┐
-│ web  (FastAPI + uvicorn, image tự build)  127.0.0.1:8001 │
-└───────┬───────────────────┬─────────────────────┬────────┘
+│ web  (FastAPI + uvicorn, image tự build)  127.0.0.1:8001 │──── redis:6379
+└───────┬───────────────────┬─────────────────────┬────────┘     (bộ đếm rate limit,
+                                                                  không lưu đĩa)
         │ postgres:5432     │ mongo:27017         │ minio:9000
   ┌─────▼──────┐     ┌──────▼──────┐       ┌──────▼──────┐
   │ PostgreSQL │     │   MongoDB   │       │    MinIO    │ 127.0.0.1:9000/9001
@@ -54,8 +54,8 @@ thêm Caddy làm reverse proxy và HTTPS.
 
 | Môi trường | Lệnh khởi động | Service |
 | --- | --- | --- |
-| Local (Windows + Docker Desktop) | `docker compose up -d --build --wait` | web, postgres, mongo, minio |
-| VPS (Ubuntu) | `docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build --wait` | 4 service trên + caddy |
+| Local (Windows + Docker Desktop) | `docker compose up -d --build --wait` | web, postgres, mongo, minio, redis |
+| VPS (Ubuntu) | `docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build --wait` | 5 service trên + caddy |
 | Khôi phục dữ liệu | `docker compose -f docker-compose.restore.yaml ...` | stack tạm để test restore |
 
 ## 2. Các service
@@ -66,6 +66,7 @@ thêm Caddy làm reverse proxy và HTTPS.
 | `postgres` | `postgres:16-bookworm` | Dữ liệu có cấu trúc | `users`, `projects`, `documents`, `password_reset_tokens`, `app_settings` |
 | `mongo` | `mongo:7.0` | Dữ liệu bán cấu trúc | `document_details` (tags, authors, metadata, văn bản trích xuất, đồ thị thực thể, sha256), `chat_messages`, `llm_usage` |
 | `minio` | `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` (ghim phiên bản) | Kho đối tượng tương thích S3 | Bucket `MINIO_BUCKET`, object `documents/<id>/original.<ext>` |
+| `redis` | `redis:7.4-alpine` | Bộ đếm rate limit dùng chung (mục 13) | Chỉ trong RAM, không volume |
 | `caddy` (chỉ prod) | `caddy:2-alpine` | Reverse proxy, HTTPS, nén zstd/gzip | Chứng chỉ trong volume `caddy_data` |
 
 Vì sao ba kho dữ liệu: mỗi kho hợp với một loại dữ liệu (quan hệ, JSON linh
@@ -76,7 +77,7 @@ MongoDB → PostgreSQL (`ready`); không có transaction phân tán, lỗi giữ
 ## 3. Mạng và cổng
 
 Compose tạo một mạng bridge mặc định (`research-document-workspace_default`).
-Các service gọi nhau bằng **tên service** (`postgres`, `mongo`, `minio`, `web`),
+Các service gọi nhau bằng **tên service** (`postgres`, `mongo`, `minio`, `redis`, `web`),
 host được ghi cứng trong `app/storage.py`.
 
 | Cổng | Service | Bind | Ai truy cập được |
@@ -86,6 +87,7 @@ host được ghi cứng trong `app/storage.py`.
 | 9001 | minio console | `127.0.0.1` | Chỉ máy chủ |
 | 5432 | postgres | không publish | Chỉ trong mạng Compose |
 | 27017 | mongo | không publish | Chỉ trong mạng Compose |
+| 6379 | redis | không publish | Chỉ trong mạng Compose (có mật khẩu) |
 | 80, 443 | caddy (prod) | `0.0.0.0` | Internet |
 
 Trên VPS, `deploy/ufw-setup.sh` chỉ mở OpenSSH, 80, 443 (lớp bảo vệ thứ hai,
@@ -126,9 +128,10 @@ CMD ["sh", "-c", "python -m app.bootstrap && exec python -m uvicorn app.main:app
 - `.dockerignore` loại `.env`, `tests/`, `docs/`, `samples/`, `artifacts/` khỏi
   build context: image không chứa bí mật hay dữ liệu test.
 - `exec` để uvicorn thành PID 1, nhận SIGTERM khi `docker stop`.
-- Một worker uvicorn (mặc định). Rate limiter và cấu hình runtime đang giữ
-  trong bộ nhớ tiến trình nên **chưa** chạy nhiều worker được (xem mục 13).
-- Thư viện: FastAPI, uvicorn, psycopg 3, pymongo, minio, jinja2, pypdf,
+- Một worker uvicorn (mặc định). Rate limiter đã chuyển sang Redis, nhưng cấu
+  hình runtime vẫn giữ trong bộ nhớ tiến trình nên **chưa** chạy nhiều worker
+  được (xem mục 13).
+- Thư viện: FastAPI, uvicorn, psycopg 3, pymongo, minio, redis, jinja2, pypdf,
   python-docx, python-pptx, openpyxl (`requirements.txt`). LLM và SMTP gọi bằng
   thư viện chuẩn, không cần SDK.
 
@@ -136,7 +139,7 @@ CMD ["sh", "-c", "python -m app.bootstrap && exec python -m uvicorn app.main:app
 
 Thứ tự:
 
-1. `postgres`, `mongo`, `minio` khởi động, Compose chờ cả ba `healthy`.
+1. `postgres`, `mongo`, `minio`, `redis` khởi động, Compose chờ cả bốn `healthy`.
 2. `web` chạy `app.bootstrap`: kiểm tra bí mật, tạo bảng/index/bucket nếu thiếu
    (idempotent, thử lại 5 lần mỗi kho), seed admin đầu tiên.
 3. uvicorn mở cổng 8000; healthcheck của `web` gọi `/health/ready`.
@@ -148,12 +151,14 @@ Thứ tự:
 | postgres | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` | 5s / 5s / 20 |
 | mongo | `mongosh --eval "db.adminCommand('ping').ok"` | 5s / 10s / 20 |
 | minio | `curl -fsS http://127.0.0.1:9000/minio/health/live` | 5s / 5s / 20 |
+| redis | `redis-cli ping` (mật khẩu qua `REDISCLI_AUTH`) | 5s / 3s / 20 |
 
 Endpoint ứng dụng:
 
 - `/health/live`: tiến trình còn sống, không gọi kho nào.
 - `/health/ready`: kiểm tra cả ba kho và đủ bảng/index/bucket; 503 nếu một kho
-  `down`. Hai endpoint này không cần đăng nhập.
+  `down`. Redis được báo thêm (`up`/`down`/`disabled`) nhưng không làm 503.
+  Hai endpoint này không cần đăng nhập.
 
 Mọi kết nối tới kho dữ liệu có timeout 3 giây (`app/storage.py`; PostgreSQL
 thêm `statement_timeout=3000`), nên một kho treo không làm treo request.
@@ -169,6 +174,7 @@ Compose). `.env` nằm trong `.gitignore` và `.dockerignore`. Mẫu:
 | PostgreSQL | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Compose báo lỗi ngay nếu thiếu (`${VAR:?}`) |
 | MongoDB | `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MONGO_DB` | |
 | MinIO | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (≥ 8 ký tự), `MINIO_BUCKET` | |
+| Redis | `REDIS_PASSWORD` (chữ, số, `-`, `_`) | `REDIS_URL` do compose ghép, không đặt trong `.env` |
 | Đăng nhập | `SESSION_SECRET` (≥ 32 ký tự), `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Admin chỉ được seed khi username chưa tồn tại |
 | Tài khoản | `ALLOW_SIGNUP`, `APP_BASE_URL` | `APP_BASE_URL` bắt đầu bằng `https://` = chế độ production |
 | Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | Trống `SMTP_HOST` = ghi email ra log thay vì gửi |
@@ -195,8 +201,9 @@ Cơ chế bảo vệ:
 | postgres | 1.0 | 512m | unless-stopped |
 | mongo | 2.0 | 1g | unless-stopped |
 | minio | 1.0 | 1g | unless-stopped |
+| redis | 0.5 | 128m | unless-stopped |
 | caddy (prod) | 0.5 | 256m | unless-stopped |
-| **Tổng tối đa** | 5.5 | ~3.25 GB | |
+| **Tổng tối đa** | 6.0 | ~3.4 GB | |
 
 Giới hạn là trần, không phải mức chiếm thật; số đo thật lấy bằng
 `deploy/resource-usage.sh` (ghi `docker stats`, `free -h`, `df -h` vào
@@ -245,7 +252,7 @@ Chi tiết HTTPS phía ứng dụng:
   `Referrer-Policy: same-origin`, `Permissions-Policy`, CSP `frame-ancestors 'none'`.
 
 Cập nhật phiên bản: `git pull` rồi chạy lại lệnh ở bước 5 (chỉ `web` được build
-lại; ba kho dữ liệu giữ nguyên).
+lại; các kho dữ liệu giữ nguyên).
 
 ## 10. Sao lưu và khôi phục
 
@@ -282,9 +289,9 @@ Mỗi lượt gọi LLM được ghi vào `mongo.llm_usage` (thống kê ở `/a
 
 ## 12. Giới hạn hiện tại
 
-- **Một worker, một máy:** rate limiter (`app/ratelimit.py`) và cấu hình runtime
-  (`app/settings.py`) nằm trong bộ nhớ tiến trình. Thêm worker hoặc replica sẽ
-  làm mỗi tiến trình đếm riêng.
+- **Một worker, một máy:** cấu hình runtime (`app/settings.py`) nằm trong bộ nhớ
+  tiến trình; thêm worker sẽ làm mỗi tiến trình giữ cấu hình riêng (Redis giai
+  đoạn 3). Rate limiter đã dùng Redis.
 - **Kiểm tra phiên mỗi request đi PostgreSQL** (`services.auth.session_user`),
   và mỗi hàm repository mở kết nối mới (chưa có connection pool).
 - **Tác vụ chạy lâu nằm trong request:** phân tích video bằng Gemini có thể mất
@@ -293,114 +300,94 @@ Mỗi lượt gọi LLM được ghi vào `mongo.llm_usage` (thống kê ở `/a
 - Chưa có migration tool; schema thay đổi kiểu cộng thêm trong `bootstrap.py`.
 - Chưa có giám sát tập trung (metrics/alert), chưa có sao lưu tự động.
 
-## 13. Kế hoạch bổ sung Redis
+## 13. Redis
 
-### 13.1. Có khả thi không
+### 13.1. Vì sao thêm Redis
 
-**Khả thi, công sức nhỏ (~1 ngày cho giai đoạn 1).** Mã nguồn đã chừa sẵn chỗ:
-docstring của `app/ratelimit.py` ghi rõ "chuyển sang Redis khi có nhiều worker".
-Redis giải quyết trực tiếp hai giới hạn đầu ở mục 12 và là bước cần trước khi
-chạy nhiều worker uvicorn. Thêm Redis cũng phát triển đề tài theo đúng hướng môn
-học: thêm một service vào Compose, cấu hình mạng nội bộ, healthcheck, giới hạn
-tài nguyên và xử lý khi service phụ bị lỗi.
+Rate limiter (`app/ratelimit.py`) trước đây đếm trong bộ nhớ tiến trình: chỉ
+đúng với một worker uvicorn, và bộ đếm về 0 mỗi lần `web` khởi động lại. Redis
+lưu bộ đếm ở một service riêng, dùng chung cho mọi tiến trình `web`. Đây là bước
+cần trước khi chạy nhiều worker.
 
-Không dùng Redis làm kho dữ liệu chính: mọi thứ trong Redis đều tạo lại được
-(bộ đếm, cache), nên mất Redis không mất dữ liệu.
+Redis không phải kho dữ liệu chính: mọi thứ trong đó tạo lại được, nên mất
+Redis không mất dữ liệu người dùng.
 
-### 13.2. Dùng Redis vào việc gì
+### 13.2. Các giai đoạn
 
-| Giai đoạn | Việc | Thay cho | Lợi ích |
+| Giai đoạn | Việc | Thay cho | Trạng thái |
 | --- | --- | --- | --- |
-| 1 | Rate limiter dùng chung | `deque` trong bộ nhớ (`ratelimit.py`) | Bộ đếm đúng khi nhiều worker; không reset khi `web` khởi động lại |
-| 2 | Cache kiểm tra phiên đăng nhập | 1 truy vấn PostgreSQL mỗi request | Giảm tải PostgreSQL |
-| 3 | Pub/sub đồng bộ cấu hình runtime | `os.environ` riêng từng tiến trình | Cho phép `uvicorn --workers N` |
-| 4 (tùy chọn) | Hàng đợi tác vụ nền (RQ) cho phân tích media | Chạy trong request | Request trả về ngay, worker riêng xử lý |
+| 1 | Rate limiter dùng chung | `deque` trong bộ nhớ | **Đã làm** |
+| 2 | Cache kiểm tra phiên đăng nhập (`session:<user_id>:<session_version>`, TTL 30 s) | 1 truy vấn PostgreSQL mỗi request | Chưa làm |
+| 3 | Pub/sub `settings:changed` để mọi worker nạp lại cấu hình runtime | `os.environ` riêng từng tiến trình | Chưa làm |
+| 4 (tùy chọn) | Hàng đợi tác vụ nền (RQ) cho phân tích media | Chạy trong request | Chưa làm |
 
-### 13.3. Thiết kế service
+Chỉ sau giai đoạn 3 mới đổi Dockerfile sang `uvicorn --workers 2`.
 
-Thêm vào `docker-compose.yaml`:
+### 13.3. Service `redis` trong `docker-compose.yaml`
 
 ```yaml
   redis:
     image: redis:7.4-alpine
-    command: >
-      redis-server
-      --requirepass ${REDIS_PASSWORD:?Missing REDIS_PASSWORD}
-      --maxmemory 64mb --maxmemory-policy allkeys-lru
-      --save "" --appendonly no
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Missing REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDISCLI_AUTH" --maxmemory 64mb --maxmemory-policy allkeys-lru --save '' --appendonly no
     cpus: "0.5"
     mem_limit: 128m
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      test: ["CMD", "redis-cli", "ping"]
 ```
 
-và trong service `web`:
-
-```yaml
-    depends_on:
-      redis:
-        condition: service_healthy
-```
+Service `web` nhận `REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0` (ghép
+trong compose, nên mật khẩu chỉ viết một lần trong `.env`) và
+`depends_on: redis: condition: service_healthy`.
 
 Quyết định thiết kế:
 
 - **Không publish cổng** (giống PostgreSQL/MongoDB): chỉ `web` gọi qua
-  `redis:6379` trong mạng Compose. Vẫn đặt `requirepass` phòng khi có container
-  khác lọt vào mạng.
-- **Không bật lưu đĩa** (`--save ""`, `--appendonly no`), không cần volume, không
-  cần sao lưu: dữ liệu là bộ đếm và cache. Bộ đếm vẫn sống qua lần khởi động lại
-  `web` (Redis là container riêng); chỉ mất khi chính Redis khởi động lại.
-- **`maxmemory 64mb` + `allkeys-lru`**: Redis tự xóa khóa cũ khi đầy, không bao
-  giờ chạm `mem_limit` 128m của container.
-- **Redis lỗi không làm sập ứng dụng:** ứng dụng bắt `redis.RedisError`, ghi log
-  `ratelimit_redis_unavailable` và quay về bộ đếm trong bộ nhớ như hiện tại.
-  `/health/ready` báo thêm `"redis": "up"|"down"` để quan sát, nhưng Redis
-  `down` không làm `ready` thành 503 (ba kho dữ liệu chính vẫn quyết định).
+  `redis:6379`. Vẫn đặt mật khẩu phòng khi có container khác lọt vào mạng.
+- **Mật khẩu qua `REDISCLI_AUTH`**: `redis-cli` tự đọc biến này nên healthcheck
+  không cần `-a`; `command` chỉ chứa `$REDISCLI_AUTH`, shell trong container mới
+  thay bằng giá trị thật.
+- **Mật khẩu chỉ gồm chữ, số, `-`, `_`** vì được ghép vào URL (`secrets.token_urlsafe`).
+- **Không lưu đĩa** (`--save ''`, `--appendonly no`), không volume, không sao lưu.
+  Bộ đếm sống qua lần khởi động lại `web`; chỉ mất khi chính Redis khởi động lại.
+- **`maxmemory 64mb` + `allkeys-lru`**: Redis tự xóa khóa cũ khi đầy, không chạm
+  `mem_limit` 128m.
 
-### 13.4. Thay đổi mã nguồn
+### 13.4. Mã nguồn
 
-| Tệp | Thay đổi |
+| Tệp | Nội dung |
 | --- | --- |
 | `requirements.txt` | `redis>=5,<6` |
-| `requirements-dev.txt` | `fakeredis` (unit test không cần Redis thật) |
-| `.env.example`, `.env.production.example` | `REDIS_PASSWORD=REPLACE_WITH_STRONG_PASSWORD`, `REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0` |
-| `app/storage.py` | `redis_client()`: `redis.Redis.from_url(os.environ["REDIS_URL"], socket_timeout=1, socket_connect_timeout=1)`, dùng chung một client (có pool sẵn) |
-| `app/ratelimit.py` | Cửa sổ trượt bằng sorted set: một pipeline `ZREMRANGEBYSCORE` (bỏ lượt cũ) → `ZCARD` → `ZADD now` → `EXPIRE window`; khóa `rl:<bucket>:<ip hoặc user_id>`. Lỗi Redis → nhánh in-memory hiện có |
-| `app/bootstrap.py` | Thêm `REDIS_PASSWORD` vào `SECRET_SETTINGS`; `check_redis()` (`PING`) |
-| `app/api/health.py` | Thêm `redis` vào kết quả, không tính vào `ready` |
-| `app/services/auth.py` (giai đoạn 2) | `session_user` đọc `session:<user_id>:<session_version>` (TTL 30 s) trước khi hỏi PostgreSQL. Khóa chứa `session_version` nên đổi mật khẩu/khóa tài khoản/đăng xuất mọi nơi tự làm cache cũ vô hiệu |
-| `app/settings.py` (giai đoạn 3) | `update()` publish `settings:changed`; mỗi worker subscribe và gọi lại `apply_saved_overrides()` |
-| `Dockerfile` (sau giai đoạn 3) | `--workers 2` |
+| `app/storage.py` | `redis_client()`: một client dùng chung (có pool), timeout 1 s; `None` khi không đặt `REDIS_URL` |
+| `app/ratelimit.py` | Cửa sổ trượt trên sorted set `rl:<bucket>:<ip hoặc user_id>`: pipeline `ZREMRANGEBYSCORE` → `ZCARD` → `ZRANGE` (lượt cũ nhất, để tính `Retry-After`), rồi `ZADD` + `EXPIRE`. Mọi lỗi Redis → log `ratelimit_redis_unavailable`, đếm trong bộ nhớ |
+| `app/bootstrap.py` | `check_redis()` trả `up`/`disabled`; `REDIS_PASSWORD` nằm trong danh sách bí mật bị chặn giá trị mẫu trên production |
+| `app/api/health.py` | `/health/ready` báo `redis`: `up`, `down` hoặc `disabled`, không tính vào `ready` |
+| `app/templates/index.html`, `base.html` | Trạng thái Redis trên trang chủ và sidebar |
+
+Hai bước kiểm tra trong `_redis_hit` không nguyên tử: hai request đến đúng lúc
+chạm giới hạn có thể cùng lọt. Chấp nhận được với rate limit.
 
 ### 13.5. Kiểm thử
 
-Unit (`tests/unit/test_ratelimit_redis.py`, dùng `fakeredis`):
+Unit, không cần Redis thật (`tests/unit/test_ratelimit.py`, Redis giả trong file):
 
-- Lượt thứ `limit + 1` trong cửa sổ trả 429 kèm `Retry-After`.
-- Hai "tiến trình" (hai lần import dùng chung một fakeredis) cộng dồn cùng bộ đếm.
-- Redis ném `ConnectionError` → vẫn giới hạn bằng bộ nhớ, không trả 500.
+- Lượt thứ `limit + 1` trả 429 kèm `Retry-After`; khóa có TTL bằng cửa sổ.
+- Bộ đếm còn nguyên sau khi xóa bộ nhớ tiến trình (giả lập `web` khởi động lại).
+- Mỗi IP đếm riêng.
+- Redis lỗi → vẫn giới hạn bằng bộ nhớ, có log cảnh báo, không trả 500.
+- Không có `REDIS_URL` → đếm trong bộ nhớ.
+- `/health/ready` 200 khi Redis `down`; `disabled` khi không cấu hình.
 
-Tích hợp (stack thật, ghi kết quả vào `docs/evidence/redis/`):
-
-1. `docker compose up -d --build --wait` → `docker compose ps` thấy 5 service `healthy`.
-2. `docker compose exec redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping` → `PONG`.
-3. Gửi 21 lần đăng nhập sai liên tiếp → lần 21 nhận 429.
-4. `docker compose restart web`, gửi thêm 1 lần → vẫn 429 (bộ đếm nằm ở Redis).
-5. `docker compose stop redis` → đăng nhập đúng vẫn thành công; log có
-   `ratelimit_redis_unavailable`; `/health/ready` báo `"redis": "down"`, HTTP 200.
-6. `docker compose start redis` → trở lại bình thường.
-7. `docker stats --no-stream` ghi RAM của `redis` (kỳ vọng vài MB).
+Tích hợp trên stack thật: `python tests/integration/redis_test.py` chạy các
+kịch bản của Bảng 4.2 trong báo cáo (PING, 21 lần đăng nhập sai → 429, restart
+`web` vẫn 429, dừng Redis vẫn đăng nhập được, `/health/ready` 200 với redis
+`down`, log fallback, RAM Redis), bật lại Redis, xóa bộ đếm thử nghiệm và ghi
+kết quả vào `artifacts/redis/`.
 
 ### 13.6. Rủi ro
 
@@ -409,7 +396,7 @@ Tích hợp (stack thật, ghi kết quả vào `docs/evidence/redis/`):
 | Redis chết làm hỏng đăng nhập | Fallback in-memory; healthcheck + `restart: unless-stopped` |
 | Thêm RAM trên VPS gói nhỏ | `mem_limit 128m`, `maxmemory 64mb` |
 | Lộ mật khẩu Redis | Chỉ trong `.env`; bootstrap chặn giá trị mẫu trên production |
-| Cache phiên cũ sau khi khóa tài khoản | Khóa cache chứa `session_version`, TTL 30 s |
+| Cache phiên cũ sau khi khóa tài khoản (giai đoạn 2) | Khóa cache chứa `session_version`, TTL 30 s |
 
 ## 14. Tệp hạ tầng trong repo
 
@@ -417,7 +404,7 @@ Tích hợp (stack thật, ghi kết quả vào `docs/evidence/redis/`):
 | --- | --- |
 | `Dockerfile` | Image ứng dụng |
 | `.dockerignore` | Loại bí mật/test/docs khỏi build context |
-| `docker-compose.yaml` | 4 service, volume, healthcheck, giới hạn tài nguyên, log |
+| `docker-compose.yaml` | 5 service, volume, healthcheck, giới hạn tài nguyên, log |
 | `docker-compose.prod.yaml` | Overlay thêm Caddy (dùng kèm, không dùng riêng) |
 | `docker-compose.restore.yaml` | Stack tạm để thử khôi phục |
 | `Caddyfile` | `{$DOMAIN}` → `reverse_proxy web:8000`, nén zstd/gzip |
@@ -426,3 +413,4 @@ Tích hợp (stack thật, ghi kết quả vào `docs/evidence/redis/`):
 | `deploy/resource-usage.sh` | Chụp số đo RAM/CPU/disk |
 | `deploy/external-smoke-test.py` | Kiểm thử từ mạng ngoài |
 | `tests/integration/day4_*.py` | Sao lưu, khôi phục, kiểm tra khôi phục |
+| `tests/integration/redis_test.py` | Kiểm thử Redis trên stack thật |

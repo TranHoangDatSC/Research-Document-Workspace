@@ -8,6 +8,7 @@
 | PostgreSQL | Project + thông tin cố định của tài liệu |
 | MongoDB | Metadata linh hoạt (tags, authors, custom metadata, SHA-256) |
 | MinIO | File gốc, console `127.0.0.1:9001` |
+| Redis | Bộ đếm giới hạn tần suất dùng chung (không mở cổng, không lưu đĩa) |
 
 Tất cả chạy bằng Docker Compose. Không cần cài Python/DB trên Windows để chạy app.
 
@@ -28,7 +29,7 @@ docker compose up -d --build --wait --wait-timeout 180
 ```
 
 Container `web` tự chạy bootstrap (tạo bảng, index, bucket nếu chưa có) trước khi
-mở API, nên không cần bước khởi tạo thủ công. Lệnh `up` trả về khi cả 4 service
+mở API, nên không cần bước khởi tạo thủ công. Lệnh `up` trả về khi cả 5 service
 `healthy`.
 
 > ⚠️ Mật khẩu/tên DB được ghi vào volume **ở lần chạy đầu**. Sau đó đổi giá trị
