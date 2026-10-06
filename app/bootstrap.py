@@ -8,7 +8,7 @@ import time
 from uuid import uuid4
 
 from app import auth
-from app.storage import postgres_connection, mongo_client, minio_client
+from app.storage import postgres_connection, mongo_client, minio_client, redis_client
 
 
 def bucket_name():
@@ -154,6 +154,15 @@ def check_minio():
         raise RuntimeError("Missing document bucket")
 
 
+def check_redis():
+    """"up", or "disabled" when REDIS_URL is unset; raises when unreachable."""
+    client = redis_client()
+    if client is None:
+        return "disabled"
+    client.ping()
+    return "up"
+
+
 def seed_admin_user():
     """Creates the admin from ADMIN_USERNAME/ADMIN_PASSWORD if that username
     doesn't exist. Never overwrites; skipped when the variables are unset."""
@@ -192,7 +201,10 @@ def assign_unowned_projects():
         print(f"Project owners: {moved} existing project(s) assigned to the first admin", flush=True)
 
 
-SECRET_SETTINGS = ("SESSION_SECRET", "ADMIN_PASSWORD", "POSTGRES_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD", "MINIO_ROOT_PASSWORD")
+SECRET_SETTINGS = (
+    "SESSION_SECRET", "ADMIN_PASSWORD", "POSTGRES_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD", "MINIO_ROOT_PASSWORD",
+    "REDIS_PASSWORD",
+)
 
 
 def check_secrets():

@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.bootstrap import check_postgres, check_mongodb, check_minio
+from app.bootstrap import check_postgres, check_mongodb, check_minio, check_redis
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -33,6 +33,13 @@ def health_ready():
             services[name] = "down"
 
     ready = all(value == "up" for value in services.values())
+
+    # Reported but not required: without Redis the rate limiter counts in memory.
+    try:
+        services["redis"] = check_redis()
+    except Exception as exc:
+        logger.warning("redis readiness failed: %s", type(exc).__name__)
+        services["redis"] = "down"
 
     return JSONResponse(
         status_code=200 if ready else 503,

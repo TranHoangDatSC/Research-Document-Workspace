@@ -8,7 +8,7 @@
 </div>
 
 <section aria-label="Trạng thái hệ thống" class="stat-row">
-  {% set meta = {'postgresql': ('database', 'PostgreSQL', 'Dự án &amp; bản ghi tài liệu'), 'mongodb': ('braces', 'MongoDB', 'Metadata nghiên cứu'), 'minio': ('drive', 'MinIO', 'File gốc (S3)')} %}
+  {% set meta = {'postgresql': ('database', 'PostgreSQL', 'Dự án &amp; bản ghi tài liệu'), 'mongodb': ('braces', 'MongoDB', 'Metadata nghiên cứu'), 'minio': ('drive', 'MinIO', 'File gốc (S3)'), 'redis': ('layers', 'Redis', 'Bộ đếm giới hạn tần suất')} %}
   {% for name, state in health.services.items() %}
   <div class="stat-card">
     <span class="stat-icon">{{ icon(meta[name][0], 18) }}</span>

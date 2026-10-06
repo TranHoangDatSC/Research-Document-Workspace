@@ -478,7 +478,11 @@ class FakeBackend:
                 "user_stats": self.user_stats, "claim_key_access": self.claim_key_access,
             },
             documents_service: {"minio_client": lambda: self, "bucket_name": lambda: "test"},
-            health: {name: (lambda: None) for name in ("check_postgres", "check_mongodb", "check_minio")},
+            health: {
+                **{name: (lambda: None) for name in ("check_postgres", "check_mongodb", "check_minio")},
+                "check_redis": lambda: "disabled",
+            },
+            ratelimit: {"redis_client": lambda: None},  # in-memory counts in tests
         }
         replacements[mailer] = {"send": lambda to, subject, body: self.mail.append((to, subject, body))}
         replacements[auth_service] = {"dispatch": lambda job: job()}  # "background" mail runs inline

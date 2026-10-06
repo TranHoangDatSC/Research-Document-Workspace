@@ -6,9 +6,14 @@ services:
     image: research-document-workspace:dev
     env_file:
       - .env
+    environment:
+      # Built here (not in .env) so the password is written once, as REDIS_PASSWORD.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Missing REDIS_PASSWORD}@redis:6379/0
     ports:
       - "127.0.0.1:8001:8000"
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       mongo:
@@ -101,6 +106,31 @@ services:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
+      retries: 20
+
+  # Shared rate-limit counters. No published port, no disk persistence:
+  # everything in it can be rebuilt, so it needs no volume and no backup.
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      # redis-cli reads REDISCLI_AUTH, so the healthcheck needs no -a flag.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Missing REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDISCLI_AUTH" --maxmemory 64mb --maxmemory-policy allkeys-lru --save '' --appendonly no
+    cpus: "0.5"
+    mem_limit: 128m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 20
 
 volumes:

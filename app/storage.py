@@ -31,6 +31,25 @@ def mongo_client():
     )
 
 
+_redis = None
+
+
+def redis_client():
+    """Shared Redis client (it pools its own connections), or None when
+    REDIS_URL is unset: callers then keep their state in process memory.
+    `redis` is imported on first use, so running without Redis needs no
+    package."""
+    global _redis
+    url = os.environ.get("REDIS_URL", "").strip()
+    if not url:
+        return None
+    if _redis is None:
+        import redis
+
+        _redis = redis.Redis.from_url(url, socket_timeout=1, socket_connect_timeout=1)
+    return _redis
+
+
 def minio_client():
     return Minio(
         "minio:9000",
