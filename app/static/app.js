@@ -531,6 +531,24 @@
   }
   enhanceEntityGraphs(document);
 
+  // ----- background AI analysis (app/jobs.py): while the page shows one as
+  // pending, ask the JSON API every 5 s and reload once it is done. -----
+  function watchAiJob(root) {
+    var notice = root.querySelector('[data-ai-job-pending]');
+    if (!notice || !window.fetch || notice.hasAttribute('data-watching')) return;
+    notice.setAttribute('data-watching', '');
+    var timer = setInterval(function () {
+      if (!document.body.contains(notice)) { clearInterval(timer); return; }
+      fetch(notice.getAttribute('data-poll-url'), { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (doc) {
+          if (doc && !doc.ai_job_pending) { clearInterval(timer); window.location.reload(); }
+        })
+        .catch(function () { /* network blip: try again next tick */ });
+    }, 5000);
+  }
+  watchAiJob(document);
+
   // "Trích xuất văn bản": run it in place and swap in the refreshed tab
   // content, instead of a full page load. Without fetch, the form posts
   // normally and the redirect's #extract hash still reopens this tab.
@@ -557,7 +575,7 @@
             throw new Error(message ? message.textContent : 'Trích xuất thất bại, thử lại sau.');
           }
           var freshPane = page.getElementById(pane.id);
-          if (freshPane) { pane.innerHTML = freshPane.innerHTML; enhanceEntityGraphs(pane); }
+          if (freshPane) { pane.innerHTML = freshPane.innerHTML; enhanceEntityGraphs(pane); watchAiJob(pane); }
           // The MongoDB JSON tab shows the same record — keep it in sync too.
           var freshJson = page.getElementById('json-source');
           var json = document.getElementById('json-source');
@@ -1200,6 +1218,7 @@
         mainEl.scrollTop = 0;
         initDocTabs(mainEl);
         initInspectorToggle();
+        watchAiJob(mainEl);
       })
       .catch(function () {
         // Anything unexpected (deleted document, server error, logged out):

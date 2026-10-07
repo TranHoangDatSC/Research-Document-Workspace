@@ -8,16 +8,16 @@ import io
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from app import access, extractors, file_types, media_ai
+from app import access, extractors, file_types, jobs, media_ai
 from app import graph as entity_graph
 from app.bootstrap import bucket_name
 from app.extractors import MAX_INPUT_BYTES as EXTRACT_MAX_BYTES, ExtractionError, extract_text
@@ -253,6 +253,8 @@ def kind_totals(project_id):
 
 
 def get_document(document_id):
+    """Both stores merged. `ai_job_pending`: a background AI analysis is
+    queued or running (the page polls this)."""
     row = document_row(document_id)
     require_ready(row)
     try:
@@ -261,7 +263,7 @@ def get_document(document_id):
             raise RuntimeError("Missing document metadata")
     except Exception as exc:
         raise storage_error("read-metadata", exc, document_id) from None
-    return {**row, **details}
+    return {**row, **details, "ai_job_pending": _ai_job_pending(details.get("ai_job"))}
 
 
 def read_object(row, stage):
@@ -437,10 +439,77 @@ def _text_by_ai(row, kind):
     return extractors.from_text(text, f"gemini_{kind.name}"), model
 
 
-def extract_document(document_id):
+def _ai_job_pending(job):
+    """Queued or running, and not older than a job can live (a worker killed
+    mid-job leaves "running" behind; after that the button works again)."""
+    if not job or job.get("status") not in ("queued", "running"):
+        return False
+    try:
+        queued_at = datetime.fromisoformat(job["queued_at"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return datetime.now(timezone.utc) - queued_at < timedelta(seconds=jobs.JOB_TIMEOUT_SECONDS + 300)
+
+
+def _set_ai_job(document_id, job, stage):
+    try:
+        repository.update_ai_job(document_id, job)
+    except Exception as exc:
+        raise storage_error(stage, exc, document_id) from None
+
+
+def _queue_ai_analysis(row):
+    """True if the analysis went to the worker queue; False = run it inline."""
+    try:
+        details = repository.get_details(row["id"]) or {}
+    except Exception as exc:
+        raise storage_error("ai-job-read", exc, row["id"]) from None
+    if _ai_job_pending(details.get("ai_job")):
+        raise HTTPException(409, "Tệp đang được phân tích bằng AI trong nền; đợi xong rồi thử lại.")
+    job_id = uuid4().hex
+    queued_at = datetime.now(timezone.utc).isoformat()
+    # State first: the worker may pick the job up before enqueue() returns.
+    _set_ai_job(row["id"], {"status": "queued", "job_id": job_id, "queued_at": queued_at}, "ai-job-queue")
+    if jobs.enqueue("app.services.documents.run_ai_analysis", str(row["id"]), access.user_id(), job_id, job_id=job_id):
+        log.info("ai_analysis_queued document_id=%s job_id=%s", row["id"], job_id)
+        return True
+    _set_ai_job(row["id"], None, "ai-job-queue")
+    return False
+
+
+def run_ai_analysis(document_id, owner_id, job_id):
+    """Worker side of _queue_ai_analysis (app/worker.py). Runs as the owner,
+    records running/failed in `ai_job` and removes it on success. Job
+    arguments are strings (they go through Redis)."""
+    document_id = UUID(document_id)
+    with access.acting_as(owner_id):
+        details = repository.get_details(document_id) or {}
+        job = details.get("ai_job") or {}
+        if job.get("job_id") != job_id:
+            log.info("ai_analysis_skipped document_id=%s job_id=%s reason=superseded", document_id, job_id)
+            return
+        repository.update_ai_job(document_id, {**job, "status": "running"})
+        try:
+            extract_document(document_id, in_background=False)
+        except HTTPException as exc:
+            repository.update_ai_job(document_id, {**job, "status": "failed", "error": str(exc.detail)})
+            log.warning("ai_analysis_failed document_id=%s status=%s", document_id, exc.status_code)
+            return
+        except Exception:
+            repository.update_ai_job(document_id, {**job, "status": "failed", "error": "Lỗi không xác định; xem log worker"})
+            raise
+        repository.update_ai_job(document_id, None)
+        log.info("ai_analysis_done document_id=%s job_id=%s", document_id, job_id)
+
+
+def extract_document(document_id, in_background=True):
     """Re-runnable: reads the stored file, turns it into text, overwrites
     MongoDB. Documents, slides, sheets, data and zips are parsed here; images,
-    audio and video are read by Gemini (OCR, description, transcript)."""
+    audio and video are read by Gemini (OCR, description, transcript).
+
+    Gemini can take minutes, so media goes to the worker queue when there is
+    one (the result shows `ai_job_pending`); without a queue, or with
+    in_background=False (the worker itself), it runs here."""
     row = document_row(document_id)
     require_ready(row)
     kind = file_types.kind_of(row["object_name"])
@@ -448,6 +517,8 @@ def extract_document(document_id):
         raise HTTPException(422, "Loại tệp này không trích xuất được văn bản")
     model = None
     if kind.needs_ai:
+        if in_background and _queue_ai_analysis(row):
+            return get_document(document_id)
         result, model = _text_by_ai(row, kind)
     else:
         # Decided before downloading: local parsers hold the whole file in memory.

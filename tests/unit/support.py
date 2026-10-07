@@ -21,7 +21,7 @@ os.environ.setdefault("SESSION_SECRET", "test-secret-not-for-production")
 import psycopg
 from fastapi.testclient import TestClient
 
-from app import auth, cache, mailer, ratelimit
+from app import auth, cache, jobs, mailer, ratelimit
 from app.api import health
 from app.main import app
 from app.repositories import chats as chats_repo
@@ -216,6 +216,13 @@ class FakeBackend:
     def update_extracted_text(self, document_id, extracted):
         self._check("mongo")
         self.details[str(document_id)]["extracted_text"] = extracted
+
+    def update_ai_job(self, document_id, job):
+        self._check("mongo")
+        if job is None:
+            self.details[str(document_id)].pop("ai_job", None)
+        else:
+            self.details[str(document_id)]["ai_job"] = job
 
     def update_entity_graph(self, document_id, graph):
         self._check("mongo")
@@ -458,7 +465,7 @@ class FakeBackend:
                 name: getattr(self, name) for name in (
                     "project_exists", "get_document", "get_owned_document", "create_pending", "mark_ready", "mark_failed",
                     "list_documents", "count_documents", "list_all_documents", "extension_totals", "begin_delete", "finish_delete",
-                    "insert_details", "get_details", "delete_details", "update_extracted_text", "update_entity_graph",
+                    "insert_details", "get_details", "delete_details", "update_extracted_text", "update_entity_graph", "update_ai_job",
                     "update_details", "count_with_text",
                 )
             },
@@ -484,6 +491,7 @@ class FakeBackend:
             },
             ratelimit: {"redis_client": lambda: None},  # in-memory counts in tests
             cache: {"redis_client": lambda: None},  # no session cache in tests
+            jobs: {"redis_client": lambda: None},  # no queue: media analysis runs inline
         }
         replacements[mailer] = {"send": lambda to, subject, body: self.mail.append((to, subject, body))}
         replacements[auth_service] = {"dispatch": lambda job: job()}  # "background" mail runs inline

@@ -111,8 +111,39 @@ services:
       timeout: 5s
       retries: 20
 
-  # Shared rate-limit counters. No published port, no disk persistence:
-  # everything in it can be rebuilt, so it needs no volume and no backup.
+  # Runs queued background jobs (app/worker.py): AI analysis of images, audio
+  # and video, which can take minutes. Same image and .env as web, no port.
+  # More throughput: docker compose up -d --scale worker=2
+  worker:
+    build: .
+    image: research-document-workspace:dev
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Missing REDIS_PASSWORD}@redis:6379/0
+    depends_on:
+      web:
+        condition: service_healthy
+    cpus: "1.0"
+    mem_limit: 512m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Rate-limit counters, session-check cache, settings pub/sub and the job
+  # queue. No published port, no disk persistence (no volume, no backup):
+  # losing it loses only counters, cache entries and not-yet-run jobs.
+  # volatile-lru evicts only keys with a TTL (counters, cache), never queued jobs.
   redis:
     image: redis:7.4-alpine
     environment:
@@ -121,7 +152,7 @@ services:
     command:
       - sh
       - -c
-      - exec redis-server --requirepass "$$REDISCLI_AUTH" --maxmemory 64mb --maxmemory-policy allkeys-lru --save '' --appendonly no
+      - exec redis-server --requirepass "$$REDISCLI_AUTH" --maxmemory 64mb --maxmemory-policy volatile-lru --save '' --appendonly no
     cpus: "0.5"
     mem_limit: 128m
     restart: unless-stopped

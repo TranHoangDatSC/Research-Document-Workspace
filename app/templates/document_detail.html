@@ -78,13 +78,22 @@
       <h2>{{ 'Nội dung AI đọc được' if kind.needs_ai else 'Văn bản trích xuất' }}</h2>
       <form method="post" action="/ui/documents/{{ document.id }}/extract" data-inline-extract
             data-busy-label="{{ 'Đang phân tích bằng AI… (video có thể mất vài phút)' if kind.needs_ai else 'Đang trích xuất…' }}">
-        <button type="submit" class="btn {{ 'primary' if kind.needs_ai and not document.extracted_text else 'ghost' }} sm">{{ icon('sparkles' if kind.needs_ai else 'refresh', 14) }}<span>
-          {%- if kind.needs_ai -%}{{ 'Phân tích lại bằng AI' if document.extracted_text else 'Phân tích bằng AI' }}
+        <button type="submit" class="btn {{ 'primary' if kind.needs_ai and not document.extracted_text else 'ghost' }} sm"{% if document.ai_job_pending %} disabled{% endif %}>{{ icon('sparkles' if kind.needs_ai else 'refresh', 14) }}<span>
+          {%- if document.ai_job_pending -%}Đang phân tích…
+          {%- elif kind.needs_ai -%}{{ 'Phân tích lại bằng AI' if document.extracted_text else 'Phân tích bằng AI' }}
           {%- else -%}{{ 'Trích xuất lại' if document.extracted_text else 'Trích xuất văn bản' }}{%- endif -%}
         </span></button>
       </form>
     </div>
     <p class="notice extract-error" hidden></p>
+    {% if document.ai_job_pending %}
+    <p class="notice pending" data-ai-job-pending data-poll-url="/documents/{{ document.id }}">
+      {{ 'Đang phân tích bằng AI trong nền' if document.ai_job.status == 'running' else 'Đã xếp hàng chờ phân tích bằng AI' }}.
+      Có thể rời trang; kết quả tự hiện khi xong (hoặc tải lại trang sau ít phút).
+    </p>
+    {% elif document.ai_job and document.ai_job.status == 'failed' %}
+    <p class="notice">Lần phân tích trước thất bại: {{ document.ai_job.error }}</p>
+    {% endif %}
     {% if kind.needs_ai %}
     <p class="muted small-text">{{ kind.label }} được gửi tới Gemini để {{ 'nhận dạng chữ và mô tả nội dung' if kind.name == 'image' else 'chép lời có mốc thời gian' ~ (' và mô tả diễn biến hình ảnh' if kind.name == 'video' else '') }}; kết quả lưu lại thành văn bản để AI dùng khi hỏi đáp. Tốn hạn mức API và tệp rời khỏi máy chủ của bạn.</p>
     {% endif %}

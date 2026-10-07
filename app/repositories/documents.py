@@ -146,6 +146,13 @@ def update_entity_graph(document_id, graph):
         )
 
 
+def update_ai_job(document_id, job):
+    """Background AI analysis state ({status, job_id, ...}); None removes it."""
+    change = {"$set": {"ai_job": job}} if job is not None else {"$unset": {"ai_job": ""}}
+    with mongo_client() as client:
+        client[os.environ["MONGO_DB"]]["document_details"].update_one({"document_id": str(document_id)}, change)
+
+
 def update_details(document_id, tags, authors, custom_metadata):
     with mongo_client() as client:
         client[os.environ["MONGO_DB"]]["document_details"].update_one(

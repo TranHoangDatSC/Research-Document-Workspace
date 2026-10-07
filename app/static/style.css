@@ -88,6 +88,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .auth-submit .icon { transition: transform .15s; }
 .auth-submit:hover .icon { transform: translateX(3px); }
 .notice.success { background: var(--accent-soft); color: var(--accent-hover); }
+.notice.pending { background: #fff4d6; color: #7a5a00; }
 .field-row { display: flex; justify-content: space-between; align-items: baseline; }
 .field-hint { display: block; margin-top: 4px; font-size: 12px; font-weight: 400; color: var(--muted); }
 .auth-link:hover, .auth-switch a:hover { text-decoration: underline; }
