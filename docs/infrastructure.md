@@ -154,7 +154,7 @@ Thứ tự:
 | mongo | `mongosh --eval "db.adminCommand('ping').ok"` | 5s / 10s / 20 |
 | minio | `curl -fsS http://127.0.0.1:9000/minio/health/live` | 5s / 5s / 20 |
 | redis | `redis-cli ping` (mật khẩu qua `REDISCLI_AUTH`) | 5s / 3s / 20 |
-| worker | `python -m app.worker --check` (worker của container đã đăng ký với RQ) | 30s / 10s / 3, `start_period` 20s |
+| worker | `python -m app.worker --check`: key heartbeat `rq:worker:<tên>` của worker còn tồn tại | 30s / 10s / 3, `start_period` 20s |
 
 Endpoint ứng dụng:
 
@@ -401,10 +401,17 @@ Hàng đợi job nền (giai đoạn 4):
 | Tệp | Nội dung |
 | --- | --- |
 | `app/jobs.py` | `enqueue()` đưa job vào hàng đợi RQ `media` (timeout 15 phút). Không có Redis hoặc lỗi → trả `False` để nơi gọi chạy ngay trong request |
-| `app/worker.py` | Tiến trình của service `worker`: nạp cấu hình đã lưu, nghe pub/sub cấu hình, chạy `rq.Worker`. `--check` dùng cho healthcheck. Dùng client Redis riêng không `socket_timeout` vì worker chờ hàng đợi lâu |
+| `app/worker.py` | Tiến trình của service `worker`: nạp cấu hình đã lưu, nghe pub/sub cấu hình, chạy `rq.Worker` với tên `<hostname>-<ngẫu nhiên>` (ghi vào `/tmp/rq-worker-name`). `--check` kiểm tra key heartbeat của tên đó. Dùng client Redis riêng không `socket_timeout` vì worker chờ hàng đợi lâu |
 | `app/services/documents.py` | `extract_document` với ảnh/âm thanh/video: ghi `ai_job = {status: queued, job_id, queued_at}` vào MongoDB **trước**, rồi enqueue; trả ngay tài liệu với `ai_job_pending: true`. Đang chờ mà bấm lại → 409. `run_ai_analysis` (chạy trong worker) đánh dấu `running`, gọi Gemini, xóa `ai_job` khi xong hoặc ghi `failed` + lý do. Job bị thay bằng job mới hơn thì bỏ qua |
 | `app/templates/document_detail.html`, `app/static/app.js` | Thông báo "đang phân tích trong nền", khóa nút; JS hỏi `GET /documents/{id}` mỗi 5 s, xong thì tải lại trang. Hiện lỗi của lần trước nếu có |
 | `docker-compose.yaml` | Service `worker`, `depends_on: web: service_healthy`; tăng số worker: `docker compose up -d --scale worker=2` |
+
+Healthcheck không dùng `Worker.all()` (đọc tập `rq:workers`): lần chạy thật đầu
+tiên, sau bước dừng Redis của `redis_test.py`, Redis khởi động lại trống trơn
+(không lưu đĩa), tập `rq:workers` mất hẳn còn worker vẫn chạy job bình thường, nên
+container bị báo `unhealthy` sai. Key heartbeat thì được tạo lại ở lần heartbeat
+kế tiếp. Tên worker có phần ngẫu nhiên vì RQ từ chối khởi động nếu tên đó còn
+heartbeat sống (container bị kill cứng rồi chạy lại).
 
 Job bị kẹt (worker chết giữa chừng) giữ `running` trong MongoDB; sau 20 phút
 (`JOB_TIMEOUT_SECONDS` + 5 phút) `ai_job_pending` thành `false` và bấm lại được.
