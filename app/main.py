@@ -29,8 +29,10 @@ from app.ui.admin import router as admin_router
 @asynccontextmanager
 async def lifespan(app):
     settings.apply_saved_overrides()
+    settings.start_listener()
     logging.getLogger("uvicorn.error").info("application_started")
     yield
+    settings.stop_listener()
 
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
 app.include_router(projects_router)

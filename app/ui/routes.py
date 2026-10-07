@@ -3,7 +3,6 @@ API directly, never over loopback HTTP."""
 import json
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
@@ -33,8 +32,10 @@ templates.env.globals["upload_limits_json"] = lambda: json.dumps(file_types.limi
 templates.env.globals["upload_summary"] = file_types.summary
 # JSON in an HTML attribute; holds LLM output, so it must be HTML-escaped.
 templates.env.filters["to_json_attr"] = lambda data: Markup(escape(json.dumps(data, ensure_ascii=False)))
-# Cache-busts /static/* on each start so browsers fetch new CSS/JS after a deploy.
-templates.env.globals["asset_version"] = str(int(time.time()))
+# Cache-busts /static/* after a deploy. From the files' newest mtime, not the
+# start time, so every uvicorn worker renders the same value.
+_STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+templates.env.globals["asset_version"] = str(int(max(p.stat().st_mtime for p in _STATIC_DIR.rglob("*") if p.is_file())))
 templates.env.globals["app_name"] = branding.APP_NAME
 templates.env.globals["app_short_name"] = branding.APP_SHORT_NAME
 templates.env.globals["app_tagline"] = branding.APP_TAGLINE

@@ -9,6 +9,9 @@ services:
     environment:
       # Built here (not in .env) so the password is written once, as REDIS_PASSWORD.
       REDIS_URL: redis://:${REDIS_PASSWORD:?Missing REDIS_PASSWORD}@redis:6379/0
+      # uvicorn worker processes. Safe above 1 only because rate limits,
+      # session checks and runtime settings are shared through Redis.
+      WEB_CONCURRENCY: "2"
     ports:
       - "127.0.0.1:8001:8000"
     depends_on:
