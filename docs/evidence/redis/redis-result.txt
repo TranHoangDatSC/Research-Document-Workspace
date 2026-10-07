@@ -1,0 +1,17 @@
+redis-cli ping returns PONG: PASS
+signed-in page loads: PASS
+session check cached in Redis: PASS (session:56ace2e5-ae99-4de9-ada4-3c76b2e496b7)
+session cache TTL <= 30 s: PASS ([30])
+"log out everywhere" deletes the cached session: PASS
+web runs several uvicorn workers: PASS (3 workers)
+setting saved once is seen by every worker: PASS (30/30 pages)
+LLM_TIMEOUT_SECONDS restored to previous value: (.env)
+20 wrong logins answered 401: PASS
+login #21 answered 429: PASS
+counter stored in Redis: PASS (rl:login:172.19.0.1)
+still 429 after restarting web: PASS
+wrong login answered while Redis is stopped: PASS (HTTP 401)
+correct login works while Redis is stopped: PASS
+/health/ready 200 with redis down: PASS ({"postgresql": "up", "mongodb": "up", "minio": "up", "redis": "down"})
+web log shows the in-memory fallback: PASS
+docker stats redis: research-document-workspace-redis-1 15.75MiB / 128MiB
