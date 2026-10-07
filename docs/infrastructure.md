@@ -128,9 +128,9 @@ CMD ["sh", "-c", "python -m app.bootstrap && exec python -m uvicorn app.main:app
 - `.dockerignore` loại `.env`, `tests/`, `docs/`, `samples/`, `artifacts/` khỏi
   build context: image không chứa bí mật hay dữ liệu test.
 - `exec` để uvicorn thành PID 1, nhận SIGTERM khi `docker stop`.
-- Một worker uvicorn (mặc định). Rate limiter đã chuyển sang Redis, nhưng cấu
-  hình runtime vẫn giữ trong bộ nhớ tiến trình nên **chưa** chạy nhiều worker
-  được (xem mục 13).
+- Compose chạy 2 worker uvicorn (`WEB_CONCURRENCY`). Được vì rate limit, kiểm
+  tra phiên và cấu hình runtime đều dùng chung qua Redis (mục 13). Bootstrap vẫn
+  chạy một lần trước uvicorn.
 - Thư viện: FastAPI, uvicorn, psycopg 3, pymongo, minio, redis, jinja2, pypdf,
   python-docx, python-pptx, openpyxl (`requirements.txt`). LLM và SMTP gọi bằng
   thư viện chuẩn, không cần SDK.
@@ -289,11 +289,12 @@ Mỗi lượt gọi LLM được ghi vào `mongo.llm_usage` (thống kê ở `/a
 
 ## 12. Giới hạn hiện tại
 
-- **Một worker, một máy:** cấu hình runtime (`app/settings.py`) nằm trong bộ nhớ
-  tiến trình; thêm worker sẽ làm mỗi tiến trình giữ cấu hình riêng (Redis giai
-  đoạn 3). Rate limiter đã dùng Redis.
-- **Kiểm tra phiên mỗi request đi PostgreSQL** (`services.auth.session_user`),
-  và mỗi hàm repository mở kết nối mới (chưa có connection pool).
+- **Một máy:** 2 worker trong một container. Chạy nhiều replica `web` cần thêm
+  load balancer phía trước; trạng thái chung đã nằm trong Redis/PostgreSQL.
+- **RAM của `web` với 2 worker:** vẫn giới hạn 512m; mỗi worker có thể giữ một
+  tệp ≤ 50 MiB khi trích xuất văn bản. Đo lại bằng `deploy/resource-usage.sh`.
+- **Mỗi hàm repository mở kết nối PostgreSQL mới** (chưa có connection pool).
+  Kiểm tra phiên đăng nhập đã được cache trong Redis 30 giây.
 - **Tác vụ chạy lâu nằm trong request:** phân tích video bằng Gemini có thể mất
   vài phút và chiếm một luồng của threadpool.
 - Upload qua 3 kho không phải transaction phân tán (có bước bù trừ).
@@ -317,11 +318,12 @@ Redis không mất dữ liệu người dùng.
 | Giai đoạn | Việc | Thay cho | Trạng thái |
 | --- | --- | --- | --- |
 | 1 | Rate limiter dùng chung | `deque` trong bộ nhớ | **Đã làm** |
-| 2 | Cache kiểm tra phiên đăng nhập (`session:<user_id>:<session_version>`, TTL 30 s) | 1 truy vấn PostgreSQL mỗi request | Chưa làm |
-| 3 | Pub/sub `settings:changed` để mọi worker nạp lại cấu hình runtime | `os.environ` riêng từng tiến trình | Chưa làm |
+| 2 | Cache kiểm tra phiên đăng nhập (`session:<user_id>`, TTL 30 s) | 1 truy vấn PostgreSQL mỗi request | **Đã làm** |
+| 3 | Pub/sub `settings:changed` để mọi worker nạp lại cấu hình runtime; chạy 2 worker | `os.environ` riêng từng tiến trình, 1 worker | **Đã làm** |
 | 4 (tùy chọn) | Hàng đợi tác vụ nền (RQ) cho phân tích media | Chạy trong request | Chưa làm |
 
-Chỉ sau giai đoạn 3 mới đổi Dockerfile sang `uvicorn --workers 2`.
+Số worker đặt bằng `WEB_CONCURRENCY: "2"` trong service `web` của compose (uvicorn tự
+đọc biến này). Image chạy riêng, không qua compose, vẫn 1 worker.
 
 ### 13.3. Service `redis` trong `docker-compose.yaml`
 
@@ -372,6 +374,30 @@ Quyết định thiết kế:
 Hai bước kiểm tra trong `_redis_hit` không nguyên tử: hai request đến đúng lúc
 chạm giới hạn có thể cùng lọt. Chấp nhận được với rate limit.
 
+Cache phiên đăng nhập (giai đoạn 2):
+
+| Tệp | Nội dung |
+| --- | --- |
+| `app/cache.py` | `get`/`set`/`delete` giá trị JSON trên Redis. Mọi lỗi coi như cache miss; cảnh báo `cache_redis_unavailable` tối đa 1 lần/phút (cache được đọc ở mọi request) |
+| `app/services/auth.py` | `session_user` đọc `session:<user_id>` = `{"version", "user"}` trước khi hỏi PostgreSQL; chỉ dùng khi `version` trùng `session_version` trong cookie. Chỉ cache phiên hợp lệ |
+| `app/services/auth.py` | `_forget_session` xóa key sau đổi mật khẩu, đặt lại mật khẩu, đăng xuất mọi nơi, đổi role, khóa/mở khóa |
+
+Đồng bộ cấu hình giữa các worker (giai đoạn 3):
+
+| Tệp | Nội dung |
+| --- | --- |
+| `app/settings.py` | `update()` lưu PostgreSQL, áp dụng trong worker hiện tại rồi `PUBLISH settings:changed <tên key>` (không gửi giá trị: API key là bí mật). `start_listener()` chạy một thread mỗi worker: `SUBSCRIBE`, nhận tên key thì đọc lại key đó từ PostgreSQL. Mất kết nối thì thử lại sau 5 s và đọc lại **mọi** key để bù tin nhắn bị lỡ |
+| `app/main.py` | lifespan gọi `start_listener()` / `stop_listener()` |
+| `app/ui/routes.py` | `asset_version` lấy mtime mới nhất của `static/` thay vì giờ khởi động, để 2 worker trả cùng một giá trị |
+| `docker-compose.yaml` | `WEB_CONCURRENCY: "2"` |
+
+Vì sao key không chứa version: bản đầu dùng `session:<user_id>:<version>` và
+không xóa gì, dựa vào việc version tăng khi thu hồi phiên. Unit test cho thấy
+lỗ hổng: cookie **cũ** vẫn khớp đúng entry của chính nó thêm tối đa 30 giây sau
+khi tài khoản bị khóa. Thiết kế hiện tại xóa entry ngay khi thu hồi, nên khóa
+tài khoản vẫn có hiệu lực ngay. Nếu Redis mất kết nối đúng lúc xóa, entry cũ tồn
+tại tối đa 30 giây (TTL).
+
 ### 13.5. Kiểm thử
 
 Unit, không cần Redis thật (`tests/unit/test_ratelimit.py`, Redis giả trong file):
@@ -383,8 +409,20 @@ Unit, không cần Redis thật (`tests/unit/test_ratelimit.py`, Redis giả tro
 - Không có `REDIS_URL` → đếm trong bộ nhớ.
 - `/health/ready` 200 khi Redis `down`; `disabled` khi không cấu hình.
 
+`tests/unit/test_settings_sync.py`: `update` chỉ publish tên key, không publish
+giá trị; Redis lỗi thì vẫn lưu và áp dụng; tin nhắn từ worker khác áp dụng giá
+trị đã lưu, giá trị rỗng khôi phục `.env`; key lạ bị bỏ qua; listener nhận tin
+nhắn, mất kết nối thì kết nối lại và đọc lại toàn bộ.
+
+`tests/unit/test_session_cache.py`: lần kiểm tra thứ hai không đọc PostgreSQL;
+khóa tài khoản và đổi role chấm dứt phiên đang cache ngay; cookie cũ không khớp
+entry của version mới; phiên không hợp lệ không được cache; Redis lỗi thì đọc
+PostgreSQL và chỉ cảnh báo một lần.
+
 Tích hợp trên stack thật: `python tests/integration/redis_test.py` chạy các
-kịch bản của Bảng 4.2 trong báo cáo (PING, 21 lần đăng nhập sai → 429, restart
+kịch bản của Bảng 4.2 trong báo cáo (PING, cache phiên có TTL ≤ 30 s và bị xóa khi
+đăng xuất mọi nơi, `web` có ≥ 2 worker, đổi cấu hình một lần thì 30/30 lần đọc
+thấy giá trị mới, 21 lần đăng nhập sai → 429, restart
 `web` vẫn 429, dừng Redis vẫn đăng nhập được, `/health/ready` 200 với redis
 `down`, log fallback, RAM Redis), bật lại Redis, xóa bộ đếm thử nghiệm và ghi
 kết quả vào `artifacts/redis/`.
@@ -396,7 +434,7 @@ kết quả vào `artifacts/redis/`.
 | Redis chết làm hỏng đăng nhập | Fallback in-memory; healthcheck + `restart: unless-stopped` |
 | Thêm RAM trên VPS gói nhỏ | `mem_limit 128m`, `maxmemory 64mb` |
 | Lộ mật khẩu Redis | Chỉ trong `.env`; bootstrap chặn giá trị mẫu trên production |
-| Cache phiên cũ sau khi khóa tài khoản (giai đoạn 2) | Khóa cache chứa `session_version`, TTL 30 s |
+| Cache phiên cũ sau khi khóa tài khoản | Xóa entry khi thu hồi phiên + so `version`; TTL 30 s nếu xóa thất bại |
 
 ## 14. Tệp hạ tầng trong repo
 

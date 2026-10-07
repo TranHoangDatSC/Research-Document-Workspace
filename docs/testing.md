@@ -30,6 +30,8 @@ LLM được thay bằng bản giả. Route, service, middleware đăng nhập v
 | `test_ai_retrieval.py` | Chia đoạn, xếp hạng BM25, prompt đánh số, đọc trích dẫn `[n]` |
 | `test_ai_llm_client.py` | Gọi LLM: cấu hình, payload, đọc phản hồi, xoay model/key |
 | `test_ai_chat.py` | Hỏi đáp AI và lịch sử hội thoại: hỏi (lưu), xem, xóa; domain |
+| `test_settings_sync.py` | Đồng bộ cấu hình runtime giữa các worker qua Redis pub/sub |
+| `test_session_cache.py` | Cache phiên đăng nhập trên Redis: đọc từ cache, khóa/đổi role có hiệu lực ngay, Redis lỗi thì đọc PostgreSQL |
 | `test_ratelimit.py` | Rate limit trên Redis (Redis giả): 429, giữ bộ đếm qua restart, dự phòng bộ nhớ khi Redis lỗi, `/health/ready` |
 
 `python -m unittest discover -s tests/unit` vẫn chạy được bộ này.
@@ -103,10 +105,15 @@ Stack đang `healthy`, ở thư mục gốc:
 python tests/integration/redis_test.py
 ```
 
-Chạy các kịch bản của Bảng 4.2 trong báo cáo (PING, 21 lần đăng nhập sai → 429,
+Chạy các kịch bản của Bảng 4.2 trong báo cáo (PING, cache phiên đăng nhập, số
+worker và đồng bộ cấu hình giữa worker, 21 lần
+đăng nhập sai → 429,
 restart `web` vẫn 429, dừng Redis vẫn đăng nhập được). Script tự bật lại Redis,
 xóa bộ đếm thử nghiệm và ghi kết quả vào `artifacts/redis/`. Trong lúc chạy, IP
-của máy bị khóa đăng nhập tạm thời; script xóa khóa đó ở cuối.
+của máy bị khóa đăng nhập tạm thời; script xóa khóa đó ở cuối. Script đăng nhập
+bằng `ADMIN_USERNAME`/`ADMIN_PASSWORD` trong `.env` và kết thúc bằng "đăng xuất
+mọi nơi", nên trình duyệt đang đăng nhập tài khoản đó sẽ phải đăng nhập lại.
+Bước đồng bộ cấu hình tạm đổi `LLM_TIMEOUT_SECONDS` thành 77 rồi trả về giá trị cũ.
 
 ## Lưu bằng chứng
 

@@ -1,12 +1,19 @@
 """Run on Windows with Python 3.11+, from the project root, with the stack
-healthy. Standard library only. No secrets needed: it only sends wrong
-passwords, and reads REDIS_PASSWORD inside the container, never here.
+healthy. Standard library only. Signs in with ADMIN_USERNAME/ADMIN_PASSWORD
+from .env (like the other integration tests); REDIS_PASSWORD is only used
+inside the container.
 
 Checks the scenarios of report table 4.2 against the real stack:
-redis answers PING; the 21st failed login gets 429; the count survives a
-`web` restart (it lives in Redis); with Redis stopped, logins still get an
-answer (no 500), /health/ready stays 200 with redis "down", and the web log
-shows the fallback. Restarts Redis and clears the test's counters at the end.
+redis answers PING; a signed-in request caches the session check in Redis
+(TTL <= 30 s) and "log out everywhere" deletes it; `web` runs several uvicorn
+workers and a setting saved on one is seen by all (pub/sub), then restored to
+its previous value; the 21st failed login gets
+429; the count survives a `web` restart (it lives in Redis); with Redis
+stopped, logins still get an answer (no 500), /health/ready stays 200 with
+redis "down", and the web log shows the fallback. Restarts Redis and clears
+the test's counters at the end.
+
+Side effect: the admin account is logged out on every device.
 
 Output: artifacts/redis/redis-result.txt
 """
@@ -17,6 +24,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from _auth_helper import build_cookie_opener, login
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / 'artifacts' / 'redis'
@@ -65,6 +74,65 @@ def clear_counters():
         redis_cli('del', *keys)
 
 
+def check_session_cache():
+    opener = build_cookie_opener()
+    login(BASE, opener)
+    with opener.open(BASE + '/account', timeout=20) as response:
+        require(response.status == 200, 'signed-in page loads')
+    keys = redis_cli('--scan', '--pattern', 'session:*').split()
+    require(bool(keys), 'session check cached in Redis', ' '.join(keys))
+    ttls = [int(redis_cli('ttl', key)) for key in keys]
+    require(all(0 < ttl <= 30 for ttl in ttls), 'session cache TTL <= 30 s', str(ttls))
+
+    req = urllib.request.Request(BASE + '/account/logout-everywhere', data=b'', method='POST')
+    try:
+        opener.open(req, timeout=20).close()
+    except urllib.error.HTTPError:
+        pass  # the 303 to /login may surface as an error, the POST already ran
+    remaining = [key for key in keys if redis_cli('exists', key) == '1']
+    require(not remaining, '"log out everywhere" deletes the cached session', ' '.join(remaining))
+
+
+WORKER_COUNT = ("import pathlib; print(sum(1 for p in pathlib.Path('/proc').glob('[0-9]*/cmdline') "
+                "if b'spawn_main' in p.read_bytes()))")
+SYNC_KEY, SYNC_VALUE = 'LLM_TIMEOUT_SECONDS', '77'
+
+
+def saved_setting(key):
+    sql = f"select value from app_settings where key = '{key}'"
+    out = compose('exec', '-T', 'postgres', 'sh', '-c', f'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "{sql}"').stdout
+    return out.strip()
+
+
+def save_setting(opener, key, value):
+    data = urllib.parse.urlencode({'key': key, 'value': value}).encode()
+    req = urllib.request.Request(BASE + '/admin/settings', data=data, method='POST',
+                                 headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    opener.open(req, timeout=20).close()
+
+
+def check_settings_sync():
+    workers = int(compose('exec', '-T', 'web', 'python', '-c', WORKER_COUNT).stdout.strip() or 0)
+    require(workers >= 2, 'web runs several uvicorn workers', f'{workers} workers')
+
+    opener = build_cookie_opener()
+    login(BASE, opener)
+    previous = saved_setting(SYNC_KEY)
+    try:
+        save_setting(opener, SYNC_KEY, SYNC_VALUE)
+        time.sleep(1)  # pub/sub delivery to the other workers
+        expected = f'value="{SYNC_VALUE}"'
+        pages = []
+        for _ in range(30):  # new connection each time: spread over the workers
+            with opener.open(BASE + '/admin/settings', timeout=20) as response:
+                pages.append(expected in response.read().decode('utf-8'))
+        require(all(pages), 'setting saved once is seen by every worker', f'{sum(pages)}/30 pages')
+    finally:
+        save_setting(opener, SYNC_KEY, previous)
+    results.append(f'{SYNC_KEY} restored to previous value: {previous or "(.env)"}')
+    print(results[-1], flush=True)
+
+
 def wait_ready():
     for _ in range(60):
         try:
@@ -81,7 +149,10 @@ def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     try:
         require(redis_cli('ping') == 'PONG', 'redis-cli ping returns PONG')
-        clear_counters()
+        clear_counters()  # leftovers of an interrupted run would block the sign-in
+        check_session_cache()
+        check_settings_sync()
+        clear_counters()  # the real sign-ins above count as attempts
 
         statuses = [wrong_login() for _ in range(LOGIN_LIMIT)]
         require(all(s == 401 for s in statuses), f'{LOGIN_LIMIT} wrong logins answered 401')
@@ -95,7 +166,11 @@ def main():
 
         compose('stop', 'redis')
         status = wrong_login()
-        require(status in (401, 429), 'login answered while Redis is stopped', f'HTTP {status}')
+        require(status in (401, 429), 'wrong login answered while Redis is stopped', f'HTTP {status}')
+        opener = build_cookie_opener()
+        login(BASE, opener)  # raises unless 200/303
+        with opener.open(BASE + '/account', timeout=20) as response:
+            require(response.status == 200, 'correct login works while Redis is stopped')
         status, body = http('/health/ready')
         services = json.loads(body).get('services', {})
         require(status == 200 and services.get('redis') == 'down', '/health/ready 200 with redis down', json.dumps(services))

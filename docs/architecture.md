@@ -31,7 +31,7 @@ Luồng phụ thuộc một chiều: `api/`, `ui/` → `services/` → `reposito
 | `access.py` | Người dùng của request hiện tại (ContextVar); service dùng để lọc dữ liệu theo chủ sở hữu |
 | Module thuần | `auth.py` (băm mật khẩu, ký cookie), `extractors.py`, `rag.py`, `graph.py`, `file_types.py`: không truy cập kho dữ liệu |
 | Gọi ra ngoài | `llm.py`, `media_ai.py` (Gemini/OpenAI), `mailer.py` (SMTP) |
-| `settings.py`, `ratelimit.py` | Cấu hình runtime (bộ nhớ tiến trình) và rate limit (Redis, dự phòng bộ nhớ) |
+| `settings.py`, `ratelimit.py`, `cache.py` | Cấu hình runtime (đồng bộ giữa worker qua Redis pub/sub), rate limit (Redis, dự phòng bộ nhớ), cache JSON trên Redis (dùng cho kiểm tra phiên) |
 
 Chưa dùng ORM nên không có `models/`; schema DB nằm trong `bootstrap.py` (chưa có migration).
 
@@ -61,7 +61,7 @@ tiết từng bước: [day-06-huong-dan-trien-khai-vps.docx](day-06-huong-dan-t
 
 - Upload ghi 3 storage **không** phải transaction phân tán; xem [api.md](api.md#ghi-và-lỗi-giữa-chừng).
 - Chưa có migration schema, chỉ lọc file theo đuôi.
-- Cấu hình runtime nằm trong bộ nhớ tiến trình: chỉ chạy 1 worker.
+- Chạy 2 worker uvicorn trong một container; nhiều replica cần thêm load balancer.
 
 Toàn bộ phần hạ tầng (service, cổng, volume, bí mật, VPS, sao lưu,
 Redis): [infrastructure.md](infrastructure.md).
