@@ -127,6 +127,12 @@ kèm `model`. Bản sao trên Google bị xóa ngay sau đó. Cần `LLM_PROVIDE
 tắt bằng `AI_MEDIA_ANALYSIS=false`; tệp lớn hơn `AI_MEDIA_MAX_MB` (mặc định
 200) → 422 mà không gửi gì.
 
+Khi có service `worker` (Redis + RQ), phân tích ảnh/âm thanh/video chạy **nền**:
+`POST .../extract` trả ngay 200 với tài liệu có `ai_job: {"status": "queued", ...}`
+và `ai_job_pending: true`; gọi `GET /documents/{id}` tới khi `ai_job_pending`
+thành `false`. Lỗi được ghi ở `ai_job.status = "failed"`, `ai_job.error`. Bấm lại
+trong lúc đang chờ → 409. Không có hàng đợi thì chạy ngay trong request như trước.
+
 Tài liệu, trình chiếu, dữ liệu, zip được **tự trích xuất ngay khi tải lên**
 (lỗi thì tải lên vẫn thành công, bấm nút để thử lại); ảnh/âm thanh/video chỉ
 phân tích khi người dùng bấm (tốn hạn mức API, gửi dữ liệu ra ngoài). Văn bản lưu tối đa 200 000 ký tự;

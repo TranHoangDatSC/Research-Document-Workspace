@@ -7,7 +7,8 @@ Checks the scenarios of report table 4.2 against the real stack:
 redis answers PING; a signed-in request caches the session check in Redis
 (TTL <= 30 s) and "log out everywhere" deletes it; `web` runs several uvicorn
 workers and a setting saved on one is seen by all (pub/sub), then restored to
-its previous value; the 21st failed login gets
+its previous value; the `worker` service runs a job queued from `web`
+(builtins.len("abc"), so no Gemini quota is spent); the 21st failed login gets
 429; the count survives a `web` restart (it lives in Redis); with Redis
 stopped, logins still get an answer (no 500), /health/ready stays 200 with
 redis "down", and the web log shows the fallback. Restarts Redis and clears
@@ -133,6 +134,28 @@ def check_settings_sync():
     print(results[-1], flush=True)
 
 
+QUEUE_PROBE = """
+import time
+from rq import Queue
+from app import jobs
+from app.storage import redis_client
+job = Queue(jobs.QUEUE, connection=redis_client()).enqueue('builtins.len', 'abc')
+for _ in range(60):
+    if job.get_status(refresh=True) in ('finished', 'failed'):
+        break
+    time.sleep(0.5)
+status = job.get_status(refresh=True)
+print(getattr(status, 'value', status), job.return_value())  # JobStatus enum -> 'finished'
+"""
+
+
+def check_worker():
+    status = compose('ps', '--format', '{{.Status}}', 'worker').stdout.strip()
+    require('healthy' in status, 'worker service healthy', status)
+    out = compose('exec', '-T', 'web', 'python', '-c', QUEUE_PROBE).stdout.strip()
+    require(out == 'finished 3', 'job queued by web is run by the worker', out)
+
+
 def wait_ready():
     for _ in range(60):
         try:
@@ -152,6 +175,7 @@ def main():
         clear_counters()  # leftovers of an interrupted run would block the sign-in
         check_session_cache()
         check_settings_sync()
+        check_worker()
         clear_counters()  # the real sign-ins above count as attempts
 
         statuses = [wrong_login() for _ in range(LOGIN_LIMIT)]

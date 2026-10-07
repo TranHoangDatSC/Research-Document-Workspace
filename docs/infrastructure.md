@@ -54,8 +54,8 @@ thêm Caddy làm reverse proxy và HTTPS.
 
 | Môi trường | Lệnh khởi động | Service |
 | --- | --- | --- |
-| Local (Windows + Docker Desktop) | `docker compose up -d --build --wait` | web, postgres, mongo, minio, redis |
-| VPS (Ubuntu) | `docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build --wait` | 5 service trên + caddy |
+| Local (Windows + Docker Desktop) | `docker compose up -d --build --wait` | web, worker, postgres, mongo, minio, redis |
+| VPS (Ubuntu) | `docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build --wait` | 6 service trên + caddy |
 | Khôi phục dữ liệu | `docker compose -f docker-compose.restore.yaml ...` | stack tạm để test restore |
 
 ## 2. Các service
@@ -66,7 +66,8 @@ thêm Caddy làm reverse proxy và HTTPS.
 | `postgres` | `postgres:16-bookworm` | Dữ liệu có cấu trúc | `users`, `projects`, `documents`, `password_reset_tokens`, `app_settings` |
 | `mongo` | `mongo:7.0` | Dữ liệu bán cấu trúc | `document_details` (tags, authors, metadata, văn bản trích xuất, đồ thị thực thể, sha256), `chat_messages`, `llm_usage` |
 | `minio` | `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` (ghim phiên bản) | Kho đối tượng tương thích S3 | Bucket `MINIO_BUCKET`, object `documents/<id>/original.<ext>` |
-| `redis` | `redis:7.4-alpine` | Bộ đếm rate limit dùng chung (mục 13) | Chỉ trong RAM, không volume |
+| `worker` | cùng image với `web`, lệnh `python -m app.worker` | Chạy job nền: phân tích ảnh/âm thanh/video bằng Gemini (mục 13) | Không lưu gì trên đĩa |
+| `redis` | `redis:7.4-alpine` | Rate limit, cache phiên, pub/sub cấu hình, hàng đợi job (mục 13) | Chỉ trong RAM, không volume |
 | `caddy` (chỉ prod) | `caddy:2-alpine` | Reverse proxy, HTTPS, nén zstd/gzip | Chứng chỉ trong volume `caddy_data` |
 
 Vì sao ba kho dữ liệu: mỗi kho hợp với một loại dữ liệu (quan hệ, JSON linh
@@ -140,6 +141,7 @@ CMD ["sh", "-c", "python -m app.bootstrap && exec python -m uvicorn app.main:app
 Thứ tự:
 
 1. `postgres`, `mongo`, `minio`, `redis` khởi động, Compose chờ cả bốn `healthy`.
+   `worker` chỉ khởi động sau khi `web` `healthy` (bootstrap đã tạo xong schema).
 2. `web` chạy `app.bootstrap`: kiểm tra bí mật, tạo bảng/index/bucket nếu thiếu
    (idempotent, thử lại 5 lần mỗi kho), seed admin đầu tiên.
 3. uvicorn mở cổng 8000; healthcheck của `web` gọi `/health/ready`.
@@ -152,6 +154,7 @@ Thứ tự:
 | mongo | `mongosh --eval "db.adminCommand('ping').ok"` | 5s / 10s / 20 |
 | minio | `curl -fsS http://127.0.0.1:9000/minio/health/live` | 5s / 5s / 20 |
 | redis | `redis-cli ping` (mật khẩu qua `REDISCLI_AUTH`) | 5s / 3s / 20 |
+| worker | `python -m app.worker --check` (worker của container đã đăng ký với RQ) | 30s / 10s / 3, `start_period` 20s |
 
 Endpoint ứng dụng:
 
@@ -201,9 +204,10 @@ Cơ chế bảo vệ:
 | postgres | 1.0 | 512m | unless-stopped |
 | mongo | 2.0 | 1g | unless-stopped |
 | minio | 1.0 | 1g | unless-stopped |
+| worker | 1.0 | 512m | unless-stopped |
 | redis | 0.5 | 128m | unless-stopped |
 | caddy (prod) | 0.5 | 256m | unless-stopped |
-| **Tổng tối đa** | 6.0 | ~3.4 GB | |
+| **Tổng tối đa** | 7.0 | ~3.9 GB | |
 
 Giới hạn là trần, không phải mức chiếm thật; số đo thật lấy bằng
 `deploy/resource-usage.sh` (ghi `docker stats`, `free -h`, `df -h` vào
@@ -295,8 +299,8 @@ Mỗi lượt gọi LLM được ghi vào `mongo.llm_usage` (thống kê ở `/a
   tệp ≤ 50 MiB khi trích xuất văn bản. Đo lại bằng `deploy/resource-usage.sh`.
 - **Mỗi hàm repository mở kết nối PostgreSQL mới** (chưa có connection pool).
   Kiểm tra phiên đăng nhập đã được cache trong Redis 30 giây.
-- **Tác vụ chạy lâu nằm trong request:** phân tích video bằng Gemini có thể mất
-  vài phút và chiếm một luồng của threadpool.
+- **Hàng đợi job không lưu đĩa:** Redis khởi động lại thì job chưa chạy bị mất;
+  tài liệu đó hiện "đang chờ" tới khi quá hạn (20 phút) rồi bấm lại được.
 - Upload qua 3 kho không phải transaction phân tán (có bước bù trừ).
 - Chưa có migration tool; schema thay đổi kiểu cộng thêm trong `bootstrap.py`.
 - Chưa có giám sát tập trung (metrics/alert), chưa có sao lưu tự động.
@@ -320,7 +324,7 @@ Redis không mất dữ liệu người dùng.
 | 1 | Rate limiter dùng chung | `deque` trong bộ nhớ | **Đã làm** |
 | 2 | Cache kiểm tra phiên đăng nhập (`session:<user_id>`, TTL 30 s) | 1 truy vấn PostgreSQL mỗi request | **Đã làm** |
 | 3 | Pub/sub `settings:changed` để mọi worker nạp lại cấu hình runtime; chạy 2 worker | `os.environ` riêng từng tiến trình, 1 worker | **Đã làm** |
-| 4 (tùy chọn) | Hàng đợi tác vụ nền (RQ) cho phân tích media | Chạy trong request | Chưa làm |
+| 4 | Hàng đợi job nền (RQ) + service `worker` cho phân tích ảnh/âm thanh/video | Chạy trong request, chờ vài phút | **Đã làm** |
 
 Số worker đặt bằng `WEB_CONCURRENCY: "2"` trong service `web` của compose (uvicorn tự
 đọc biến này). Image chạy riêng, không qua compose, vẫn 1 worker.
@@ -335,7 +339,7 @@ Số worker đặt bằng `WEB_CONCURRENCY: "2"` trong service `web` của compo
     command:
       - sh
       - -c
-      - exec redis-server --requirepass "$$REDISCLI_AUTH" --maxmemory 64mb --maxmemory-policy allkeys-lru --save '' --appendonly no
+      - exec redis-server --requirepass "$$REDISCLI_AUTH" --maxmemory 64mb --maxmemory-policy volatile-lru --save '' --appendonly no
     cpus: "0.5"
     mem_limit: 128m
     restart: unless-stopped
@@ -357,8 +361,9 @@ Quyết định thiết kế:
 - **Mật khẩu chỉ gồm chữ, số, `-`, `_`** vì được ghép vào URL (`secrets.token_urlsafe`).
 - **Không lưu đĩa** (`--save ''`, `--appendonly no`), không volume, không sao lưu.
   Bộ đếm sống qua lần khởi động lại `web`; chỉ mất khi chính Redis khởi động lại.
-- **`maxmemory 64mb` + `allkeys-lru`**: Redis tự xóa khóa cũ khi đầy, không chạm
-  `mem_limit` 128m.
+- **`maxmemory 64mb` + `volatile-lru`**: khi đầy, Redis chỉ xóa key có TTL (bộ
+  đếm, cache phiên), không bao giờ xóa job đang chờ trong hàng đợi; không chạm
+  `mem_limit` 128m. (Bản đầu dùng `allkeys-lru`, đổi khi thêm hàng đợi ở giai đoạn 4.)
 
 ### 13.4. Mã nguồn
 
@@ -391,6 +396,19 @@ Cache phiên đăng nhập (giai đoạn 2):
 | `app/ui/routes.py` | `asset_version` lấy mtime mới nhất của `static/` thay vì giờ khởi động, để 2 worker trả cùng một giá trị |
 | `docker-compose.yaml` | `WEB_CONCURRENCY: "2"` |
 
+Hàng đợi job nền (giai đoạn 4):
+
+| Tệp | Nội dung |
+| --- | --- |
+| `app/jobs.py` | `enqueue()` đưa job vào hàng đợi RQ `media` (timeout 15 phút). Không có Redis hoặc lỗi → trả `False` để nơi gọi chạy ngay trong request |
+| `app/worker.py` | Tiến trình của service `worker`: nạp cấu hình đã lưu, nghe pub/sub cấu hình, chạy `rq.Worker`. `--check` dùng cho healthcheck. Dùng client Redis riêng không `socket_timeout` vì worker chờ hàng đợi lâu |
+| `app/services/documents.py` | `extract_document` với ảnh/âm thanh/video: ghi `ai_job = {status: queued, job_id, queued_at}` vào MongoDB **trước**, rồi enqueue; trả ngay tài liệu với `ai_job_pending: true`. Đang chờ mà bấm lại → 409. `run_ai_analysis` (chạy trong worker) đánh dấu `running`, gọi Gemini, xóa `ai_job` khi xong hoặc ghi `failed` + lý do. Job bị thay bằng job mới hơn thì bỏ qua |
+| `app/templates/document_detail.html`, `app/static/app.js` | Thông báo "đang phân tích trong nền", khóa nút; JS hỏi `GET /documents/{id}` mỗi 5 s, xong thì tải lại trang. Hiện lỗi của lần trước nếu có |
+| `docker-compose.yaml` | Service `worker`, `depends_on: web: service_healthy`; tăng số worker: `docker compose up -d --scale worker=2` |
+
+Job bị kẹt (worker chết giữa chừng) giữ `running` trong MongoDB; sau 20 phút
+(`JOB_TIMEOUT_SECONDS` + 5 phút) `ai_job_pending` thành `false` và bấm lại được.
+
 Vì sao key không chứa version: bản đầu dùng `session:<user_id>:<version>` và
 không xóa gì, dựa vào việc version tăng khi thu hồi phiên. Unit test cho thấy
 lỗ hổng: cookie **cũ** vẫn khớp đúng entry của chính nó thêm tối đa 30 giây sau
@@ -414,6 +432,11 @@ giá trị; Redis lỗi thì vẫn lưu và áp dụng; tin nhắn từ worker k
 trị đã lưu, giá trị rỗng khôi phục `.env`; key lạ bị bỏ qua; listener nhận tin
 nhắn, mất kết nối thì kết nối lại và đọc lại toàn bộ.
 
+`tests/unit/test_ai_jobs.py`: bấm phân tích trả về ngay và không gọi Gemini;
+worker lưu văn bản và xóa `ai_job`; bấm lại khi đang chờ → 409; job lỗi được ghi
+và hiện trên trang, bấm lại được; không có hàng đợi thì chạy ngay; job quá hạn
+không chặn nữa; job bị thay thế không chạy; tệp văn bản thường không vào hàng đợi.
+
 `tests/unit/test_session_cache.py`: lần kiểm tra thứ hai không đọc PostgreSQL;
 khóa tài khoản và đổi role chấm dứt phiên đang cache ngay; cookie cũ không khớp
 entry của version mới; phiên không hợp lệ không được cache; Redis lỗi thì đọc
@@ -422,7 +445,8 @@ PostgreSQL và chỉ cảnh báo một lần.
 Tích hợp trên stack thật: `python tests/integration/redis_test.py` chạy các
 kịch bản của Bảng 4.2 trong báo cáo (PING, cache phiên có TTL ≤ 30 s và bị xóa khi
 đăng xuất mọi nơi, `web` có ≥ 2 worker, đổi cấu hình một lần thì 30/30 lần đọc
-thấy giá trị mới, 21 lần đăng nhập sai → 429, restart
+thấy giá trị mới, `worker` healthy và chạy được một job thử do `web` đưa vào hàng
+đợi, 21 lần đăng nhập sai → 429, restart
 `web` vẫn 429, dừng Redis vẫn đăng nhập được, `/health/ready` 200 với redis
 `down`, log fallback, RAM Redis), bật lại Redis, xóa bộ đếm thử nghiệm và ghi
 kết quả vào `artifacts/redis/`.
@@ -442,7 +466,7 @@ kết quả vào `artifacts/redis/`.
 | --- | --- |
 | `Dockerfile` | Image ứng dụng |
 | `.dockerignore` | Loại bí mật/test/docs khỏi build context |
-| `docker-compose.yaml` | 5 service, volume, healthcheck, giới hạn tài nguyên, log |
+| `docker-compose.yaml` | 6 service, volume, healthcheck, giới hạn tài nguyên, log |
 | `docker-compose.prod.yaml` | Overlay thêm Caddy (dùng kèm, không dùng riêng) |
 | `docker-compose.restore.yaml` | Stack tạm để thử khôi phục |
 | `Caddyfile` | `{$DOMAIN}` → `reverse_proxy web:8000`, nén zstd/gzip |

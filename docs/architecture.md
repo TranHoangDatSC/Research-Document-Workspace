@@ -31,6 +31,7 @@ Luồng phụ thuộc một chiều: `api/`, `ui/` → `services/` → `reposito
 | `access.py` | Người dùng của request hiện tại (ContextVar); service dùng để lọc dữ liệu theo chủ sở hữu |
 | Module thuần | `auth.py` (băm mật khẩu, ký cookie), `extractors.py`, `rag.py`, `graph.py`, `file_types.py`: không truy cập kho dữ liệu |
 | Gọi ra ngoài | `llm.py`, `media_ai.py` (Gemini/OpenAI), `mailer.py` (SMTP) |
+| `jobs.py`, `worker.py` | Hàng đợi job nền (RQ trên Redis) và tiến trình của service `worker` |
 | `settings.py`, `ratelimit.py`, `cache.py` | Cấu hình runtime (đồng bộ giữa worker qua Redis pub/sub), rate limit (Redis, dự phòng bộ nhớ), cache JSON trên Redis (dùng cho kiểm tra phiên) |
 
 Chưa dùng ORM nên không có `models/`; schema DB nằm trong `bootstrap.py` (chưa có migration).

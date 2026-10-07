@@ -30,6 +30,7 @@ LLM được thay bằng bản giả. Route, service, middleware đăng nhập v
 | `test_ai_retrieval.py` | Chia đoạn, xếp hạng BM25, prompt đánh số, đọc trích dẫn `[n]` |
 | `test_ai_llm_client.py` | Gọi LLM: cấu hình, payload, đọc phản hồi, xoay model/key |
 | `test_ai_chat.py` | Hỏi đáp AI và lịch sử hội thoại: hỏi (lưu), xem, xóa; domain |
+| `test_ai_jobs.py` | Phân tích media qua hàng đợi nền: trả về ngay, worker lưu kết quả, lỗi được ghi, chạy ngay khi không có hàng đợi |
 | `test_settings_sync.py` | Đồng bộ cấu hình runtime giữa các worker qua Redis pub/sub |
 | `test_session_cache.py` | Cache phiên đăng nhập trên Redis: đọc từ cache, khóa/đổi role có hiệu lực ngay, Redis lỗi thì đọc PostgreSQL |
 | `test_ratelimit.py` | Rate limit trên Redis (Redis giả): 429, giữ bộ đếm qua restart, dự phòng bộ nhớ khi Redis lỗi, `/health/ready` |
@@ -106,7 +107,7 @@ python tests/integration/redis_test.py
 ```
 
 Chạy các kịch bản của Bảng 4.2 trong báo cáo (PING, cache phiên đăng nhập, số
-worker và đồng bộ cấu hình giữa worker, 21 lần
+worker và đồng bộ cấu hình giữa worker, service `worker` chạy job thử, 21 lần
 đăng nhập sai → 429,
 restart `web` vẫn 429, dừng Redis vẫn đăng nhập được). Script tự bật lại Redis,
 xóa bộ đếm thử nghiệm và ghi kết quả vào `artifacts/redis/`. Trong lúc chạy, IP
