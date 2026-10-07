@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 from fastapi import HTTPException
 
-from app import auth, mailer
+from app import auth, cache, mailer
 from app.branding import APP_NAME
 from app.repositories import users as repository
 
@@ -24,6 +24,7 @@ MAX_PASSWORD_LENGTH = 200
 RESET_TOKEN_MINUTES = 60
 VERIFY_TOKEN_HOURS = 48
 KEY_ACCESS_TOKEN_MINUTES = 15
+SESSION_CACHE_SECONDS = 30
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SIGNUP_SETTING = "signup_open"
 
@@ -62,16 +63,36 @@ def session_token(user):
 
 
 def session_user(session):
-    """Per-request database check of a signed session: account exists, is
-    active and session_version matches. Role is read from the database, so a
-    demotion applies immediately."""
+    """Per-request check of a signed session: account exists, is active and
+    session_version matches. Role is read from the database, so a demotion
+    applies immediately.
+
+    A valid result is cached in Redis for SESSION_CACHE_SECONDS, with the
+    session_version it was valid for. Every action that revokes sessions
+    deletes the entry (_forget_session), and a cookie with another version
+    never matches it, so a lock or password change still applies at once."""
+    key = _session_key(session["user_id"])
+    cached = cache.get(key)
+    if cached is not None and cached.get("version") == session["session_version"]:
+        return cached["user"]
     try:
         row = repository.get_by_id(session["user_id"])
     except psycopg.Error as exc:
         raise _unavailable("session", exc) from None
     if row is None or not row["is_active"] or row["session_version"] != session["session_version"]:
         return None
-    return {"user_id": str(row["id"]), "username": row["username"], "role": row["role"]}
+    user = {"user_id": str(row["id"]), "username": row["username"], "role": row["role"]}
+    cache.set(key, {"version": row["session_version"], "user": user}, SESSION_CACHE_SECONDS)
+    return user
+
+
+def _session_key(user_id):
+    return f"session:{user_id}"
+
+
+def _forget_session(user_id):
+    """Called after anything that changes what session_user would return."""
+    cache.delete(_session_key(user_id))
 
 
 def change_password(user_id, current_password, new_password, new_password_confirm):
@@ -90,6 +111,7 @@ def change_password(user_id, current_password, new_password, new_password_confir
         user = repository.set_password(user_id, auth.hash_password(new_password))
     except psycopg.Error as exc:
         raise _unavailable("change-password", exc) from None
+    _forget_session(user_id)
     log.info("password_changed user_id=%s", user_id)
     return user
 
@@ -99,6 +121,7 @@ def logout_everywhere(user_id):
         repository.bump_session_version(user_id)
     except psycopg.Error as exc:
         raise _unavailable("logout-everywhere", exc) from None
+    _forget_session(user_id)
     log.info("sessions_revoked user_id=%s", user_id)
 
 
@@ -365,6 +388,7 @@ def reset_password(token, password, password_confirm):
         raise _unavailable("reset-password", exc) from None
     if user is None:
         raise HTTPException(400, "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn. Hãy yêu cầu liên kết mới.")
+    _forget_session(user["id"])
     log.info("password_reset_done user_id=%s", user["id"])
     return user
 
@@ -403,6 +427,7 @@ def set_role(user_id, role, current_user_id):
         raise _unavailable("set-role", exc) from None
     if row is None:
         raise HTTPException(404, "User not found")
+    _forget_session(user_id)
     return row
 
 
@@ -415,6 +440,7 @@ def set_active(user_id, is_active, current_user_id):
         raise _unavailable("set-active", exc) from None
     if row is None:
         raise HTTPException(404, "User not found")
+    _forget_session(user_id)
     return row
 
 

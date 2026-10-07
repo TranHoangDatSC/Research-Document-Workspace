@@ -21,7 +21,7 @@ os.environ.setdefault("SESSION_SECRET", "test-secret-not-for-production")
 import psycopg
 from fastapi.testclient import TestClient
 
-from app import auth, mailer, ratelimit
+from app import auth, cache, mailer, ratelimit
 from app.api import health
 from app.main import app
 from app.repositories import chats as chats_repo
@@ -483,6 +483,7 @@ class FakeBackend:
                 "check_redis": lambda: "disabled",
             },
             ratelimit: {"redis_client": lambda: None},  # in-memory counts in tests
+            cache: {"redis_client": lambda: None},  # no session cache in tests
         }
         replacements[mailer] = {"send": lambda to, subject, body: self.mail.append((to, subject, body))}
         replacements[auth_service] = {"dispatch": lambda job: job()}  # "background" mail runs inline
