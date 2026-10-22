@@ -366,7 +366,7 @@ pre.json { background: #14231f; color: #d7ece1; padding: 18px 20px; font-size: 1
 .shell.inspector-hidden .inspector { display: none; }
 
 /* ---------- sources panel (NotebookLM-style left rail for a project's documents) ---------- */
-.sources-panel { flex: none; width: var(--sources-w); display: flex; flex-direction: column; min-height: 0; padding: 18px 14px; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); transition: background .15s, box-shadow .15s; }
+.sources-panel { flex: none; width: var(--sources-w); height: 100%; max-height: none; display: flex; flex-direction: column; min-height: 0; padding: 18px 14px; overflow: hidden; background: var(--surface); border-right: 1px solid var(--border); transition: background .15s, box-shadow .15s; }
 .sources-panel.drag { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .sources-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; padding: 0 2px; }
 .sources-head .side-title { margin: 0; }
@@ -444,14 +444,14 @@ pre.json { background: #14231f; color: #d7ece1; padding: 18px 20px; font-size: 1
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364756f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 11px center; }
 .source-kind-filter:focus { background-color: var(--surface); }
-.source-results { display: flex; flex-direction: column; flex: 1; min-height: 0; transition: opacity .15s; }
+.source-results { display: flex; flex-direction: column; flex: 1; min-height: 0; transition: opacity .15s; overflow: hidden; }
 .source-results.loading { opacity: .5; }
 .source-results-head { display: flex; justify-content: space-between; align-items: baseline; margin: 2px 2px 8px; font-size: 12px; color: var(--muted); }
 .source-clear { color: var(--accent); font-weight: 600; text-decoration: none; }
 .source-clear:hover { text-decoration: underline; }
 
 /* Items: outlined at rest, green fill on hover or when shown in the main panel. */
-.source-list { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
+.source-list { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
 .source-item { position: relative; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; border: 1px solid #c6e3d2; border-radius: var(--radius-sm); background: var(--surface); transition: background .12s, border-color .12s; }
 .source-item:hover { background: var(--accent-soft); border-color: var(--accent); }
 .source-item.active { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
