@@ -1,7 +1,7 @@
 {% extends "_auth_layout.html" %}
 {% from "_auth_macros.html" import field %}
-{% block title %}Đăng nhập CLOUD{% endblock %}
-{% block heading %}Đăng nhập CLOUD{% endblock %}
+{% block title %}Đăng nhập{% endblock %}
+{% block heading %}Đăng nhập{% endblock %}
 {% block body %}
 {% if unverified_email %}
 <p><a class="btn secondary block" href="/verify-email/resend?email={{ unverified_email|urlencode }}">Gửi lại email xác minh</a></p>
